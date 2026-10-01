@@ -166,8 +166,11 @@ qemu-arm -cpu cortex-a7 build/qemu/abtest
 The profiling build displays FPS in the lower-right corner. This uses the interval
 between device frame callbacks, including time spent outside the game callback;
 it is not the reciprocal of CPU work time. After a two-second level warmup it
-collects 30 seconds in RAM, then writes `perf.txt` once at the start of the next
-callback, before new GL work. The compact v2 report fits within 512 bytes and includes mean
+saves an initial report after five measured seconds, then replaces it once after
+30 measured seconds. Samples survive level changes; each new level adds its own
+two-second warmup. At most two writes occur per launch, at the start of the next
+callback before new GL work. The interval containing the recorder's own disk write
+is excluded from the measurements. The compact v3 report fits within 512 bytes and includes mean
 FPS, frame-time percentiles, slow-frame counts, game/physics/draw/IO/upload timings.
 `fps10` is FPS multiplied by ten; times are microseconds except `p95_ms`, whose
 histogram is capped at 200 ms. Physics, IO and upload times are subsets of game
@@ -175,6 +178,11 @@ time. `mask_builds` counts scenery rebuilds during the measured window; the
 draw, quad and texture fields describe its final frame.
 The HUD adds one small texture and two draw batches. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.
+
+The previous recorder required 30 seconds within one level and discarded its
+samples on every transition, leaving an older report after short playthroughs.
+The v3 tests cover early/final reports, short-level transitions, uneven frame
+timing, and exclusion of the recorder's own write delay.
 
 ## Allocator optimization
 

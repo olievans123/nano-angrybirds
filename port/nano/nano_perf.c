@@ -1,6 +1,6 @@
 /* Device frame-cadence measurement. The small HUD uses one 64x16 texture.
- * Stats stay in RAM; a compact report is saved at the start of the callback after
- * measurement, before any new GL work. No file writes during draw submission. */
+ * Stats survive level changes. Save a short sample after 5 measured seconds and
+ * replace it once at 30 seconds. Writes happen before the next frame's GL work. */
 #include <stdio.h>
 #include <string.h>
 #include "nano_perf.h"
@@ -17,14 +17,15 @@ typedef struct {
 static Samples sTotal;
 static uint64_t sWindowUs, sWarmupUs;
 static uint32_t sWindowFrames, sFps10;
-static int sActive, sSaved, sFont, sReportBytes;
+static int sActive, sSaved, sEarlySaved, sFont, sReportBytes, sSkipSample;
 static uint16_t sPixels[64 * 16];
 static char sReport[512];
 
 void port_perf_level_loaded(void)
 {
     if (sSaved) return;
-    memset(&sTotal, 0, sizeof(sTotal));
+    /* Static storage starts empty. Keep earlier samples when the player moves
+     * on quickly, while still excluding each level's load and first uploads. */
     sWarmupUs = 2000000;  /* exclude the first load and its texture uploads */
     sActive = 1;
 }
@@ -42,7 +43,7 @@ static void prepare_report(void)
         if (seen >= target) break;
     }
     int n = snprintf(sReport, sizeof(sReport),
-        "AB profile v2; times us except p95_ms; 30s after 2s warmup\n"
+        "AB profile v3; times us except p95_ms; 2s warmup per level\n"
         "frames=%u elapsed=%u fps10=%u\n"
         "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
         "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
@@ -68,6 +69,7 @@ void port_perf_flush(void)
     int bytes = sReportBytes;
     sReportBytes = 0; /* never retry repeatedly on an I/O failure */
     plat_write_file("perf.txt", sReport, (uint32_t)bytes);
+    sSkipSample = 1; /* exclude the callback interval containing our own disk write */
 }
 
 void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
@@ -81,6 +83,7 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
         sWindowUs = 0;
         sWindowFrames = 0;
     }
+    if (sSkipSample) { sSkipSample = 0; return; }
     if (!sActive || sSaved) return;
     if (sWarmupUs) {
         sWarmupUs = interval >= sWarmupUs ? 0 : sWarmupUs - interval;
@@ -106,6 +109,10 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     uint32_t bin = (interval + 999u) / 1000u;
     if (bin > 200) bin = 200;
     sTotal.histogram[bin]++;
+    if (!sEarlySaved && sTotal.interval >= 5000000) {
+        sEarlySaved = 1;
+        prepare_report();
+    }
     if (sTotal.interval >= 30000000) {
         sSaved = 1;
         sActive = 0;
