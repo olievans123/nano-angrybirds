@@ -17,12 +17,13 @@ typedef struct {
     uint32_t minimum, fast60;
     uint64_t entry;
     uint32_t gap_histogram[201];
+    uint32_t cpu_histogram[201], cpu_worst, arena_min_free;
 } Samples;
 uint32_t port_perf_entry_us;
 static Samples sTotal;
 static uint64_t sWarmupUs;
 static int sActive, sSaved, sEarlySaved, sReportBytes, sSkipSample;
-static char sReport[512];
+static char sReport[768];
 
 void port_perf_level_loaded(void)
 {
@@ -48,10 +49,17 @@ static unsigned percentile(const uint32_t *histogram, unsigned percent)
     return bucket;
 }
 
+static unsigned range_count(unsigned lo, unsigned hi)
+{
+    unsigned n = 0;
+    for (unsigned b = lo; b <= hi; b++) n += sTotal.histogram[b];
+    return n;
+}
+
 static void prepare_report(void)
 {
     int n = snprintf(sReport, sizeof(sReport),
-        "AB profile v6; us except *_ms; warmup=2s/level\n"
+        "AB profile v7; us except *_ms; warmup=2s/level\n"
         "frames=%u elapsed=%u fps10=%u\n"
         "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
         "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
@@ -59,7 +67,10 @@ static void prepare_report(void)
         "alloc_avg=%u probes_avg=%u copy_B_avg=%u alloc_failures=%u\n"
         "draw_avg=%u merge_avg=%u state_avg=%u\n"
         "gap=%u vbo=%u min=%u at60=%u\n"
-        "entry=%u gap50_ms=%u gap95_ms=%u\n",
+        "entry=%u gap50_ms=%u gap95_ms=%u\n"
+        "interval_ms: <=12:%u 13-17:%u 18-25:%u 26-34:%u 35+:%u\n"
+        "cpu50_ms=%u cpu95_ms=%u cpu99_ms=%u cpu_worst=%u\n"
+        "arena_min_free=%u lua_peak_KiB=%u lua_fail=%u lua_recover=%u\n",
         (unsigned)sTotal.frames, (unsigned)sTotal.interval,
         (unsigned)(10000000ull * sTotal.frames / sTotal.interval),
         average(sTotal.interval), percentile(sTotal.histogram, 95), (unsigned)sTotal.worst,
@@ -74,7 +85,12 @@ static void prepare_report(void)
         average(sTotal.gap), average(sTotal.buffer),
         (unsigned)sTotal.minimum, (unsigned)sTotal.fast60,
         average(sTotal.entry), percentile(sTotal.gap_histogram, 50),
-        percentile(sTotal.gap_histogram, 95));
+        percentile(sTotal.gap_histogram, 95),
+        range_count(0, 12), range_count(13, 17), range_count(18, 25), range_count(26, 34), range_count(35, 200),
+        percentile(sTotal.cpu_histogram, 50), percentile(sTotal.cpu_histogram, 95),
+        percentile(sTotal.cpu_histogram, 99), (unsigned)sTotal.cpu_worst,
+        (unsigned)sTotal.arena_min_free, (unsigned)(game_stat_lua_cost_peak / 1024u),
+        (unsigned)game_stat_lua_failures, (unsigned)game_stat_lua_recoveries);
     if (n > 0 && (unsigned)n < sizeof(sReport))
         sReportBytes = n;
 }
@@ -125,6 +141,11 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     sTotal.copied += ast.copied;
     sTotal.alloc_failures += ast.failures;
     if (interval > sTotal.worst) sTotal.worst = interval;
+    if (cpu > sTotal.cpu_worst) sTotal.cpu_worst = cpu;
+    uint32_t cpu_bin = (cpu + 999u) / 1000u;
+    sTotal.cpu_histogram[cpu_bin > 200 ? 200 : cpu_bin]++;
+    uint32_t arena_free = port_arena_free_bytes();
+    if (sTotal.frames == 1 || arena_free < sTotal.arena_min_free) sTotal.arena_min_free = arena_free;
     sTotal.slow33 += interval > 33334u;
     sTotal.slow50 += interval > 50000u;
     uint32_t bin = (interval + 999u) / 1000u;

@@ -51,9 +51,13 @@ static uint32_t offset(const ArenaBlk *b) { return (uint32_t)((const uint8_t *)b
 static ArenaBlk *block_at(uint32_t off) { return (ArenaBlk *)(sArena + off); }
 static unsigned bin_for(uint32_t size) { return 27u - (unsigned)__builtin_clz(size); }
 
+static uint32_t sFreeBytes;
+uint32_t port_arena_free_bytes(void) { return sFreeBytes; }
+
 static void insert_free(ArenaBlk *b)
 {
     unsigned bin = bin_for(block_size(b));
+    sFreeBytes += block_size(b);
     b->prev_free = NONE;
     b->next_free = sBins[bin];
     if (b->next_free != NONE) block_at(b->next_free)->prev_free = offset(b);
@@ -62,6 +66,7 @@ static void insert_free(ArenaBlk *b)
 
 static void remove_free(ArenaBlk *b)
 {
+    sFreeBytes -= block_size(b);
     if (b->prev_free == NONE) sBins[bin_for(block_size(b))] = b->next_free;
     else block_at(b->prev_free)->next_free = b->next_free;
     if (b->next_free != NONE) block_at(b->next_free)->prev_free = b->prev_free;

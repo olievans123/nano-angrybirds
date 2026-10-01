@@ -14,6 +14,7 @@
 extern "C" void ab_open_libs(lua_State *L);
 
 Game G;
+uint32_t game_stat_lua_recoveries;
 #ifdef AB_NANO
 uint32_t game_stat_physics_us;
 #endif
@@ -43,7 +44,17 @@ int env_call(const char *fn, int nargs, int nresults)
         return 1;
     }
     lua_insert(L, -1 - nargs);
-    if (lua_pcall(L, nargs, nresults, 0)) {
+    int rc = lua_pcall(L, nargs, nresults, 0);
+    if (rc == LUA_ERRMEM) {
+        /* Out of script memory: Lua 5.1 does not collect before giving up. Collect now and
+         * carry on (this call's work is lost) rather than stop the game for good. */
+        static int repeats;
+        script_error(fn);
+        lua_gc(L, LUA_GCCOLLECT, 0);
+        game_stat_lua_recoveries++;
+        return ++repeats > 120 ? 2 : 3;
+    }
+    if (rc) {
         script_error(fn);
         return 2;
     }
@@ -862,13 +873,21 @@ static bool read_table(lua_State *L, const char *file, int save)
     if (!data)
         return false;
     bool ok = false;
-    if (luaL_loadbuffer(L, data, size, file) == 0) {
-        lua_pushvalue(L, -2);
-        lua_setfenv(L, -2);
-        if (lua_pcall(L, 0, 0, 0) == 0) ok = true;
-        else script_error(file);
-    } else {
+    for (int attempt = 0; attempt < 2 && !ok; attempt++) {
+        int rc = luaL_loadbuffer(L, data, size, file);
+        if (rc == 0) {
+            lua_pushvalue(L, -2);
+            lua_setfenv(L, -2);
+            rc = lua_pcall(L, 0, 0, 0);
+        }
+        if (rc == 0) { ok = true; break; }
         script_error(file);
+        if (rc != LUA_ERRMEM) break;
+        /* out of script memory: collect and try once more with a fresh table */
+        lua_gc(L, LUA_GCCOLLECT, 0);
+        game_stat_lua_recoveries++;
+        lua_pop(L, 1);
+        lua_newtable(L);
     }
     free(data);
     return ok;
@@ -1006,6 +1025,8 @@ static int l_loadLevel(lua_State *L)
     particles_clear();
     render_level_reset();
     load_lua_file(file, "loadedObjects");
+    /* the previous level's tables are garbage now: collect while nothing is on screen */
+    lua_gc(L, LUA_GCCOLLECT, 0);
     G.loading = false;
     port_checkpoint("level-ready", file, 0);
     return 0;
@@ -1211,6 +1232,53 @@ static void game_input(const PlatTouches *t)
 }
 
 /* ------------------------------------------------------------------------------------ */
+/* Script memory                                                                        */
+/* ------------------------------------------------------------------------------------ */
+
+/* The script's allocator, counted: how many blocks and bytes Lua holds, and what they
+ * cost in the nano's arena (nano/nano_alloc.c: each block is rounded to 16 bytes and
+ * carries headers). The host can cap that cost to model the device's arena. */
+uint32_t game_stat_lua_blocks, game_stat_lua_bytes, game_stat_lua_cost, game_stat_lua_cost_peak;
+uint32_t game_stat_lua_failures;
+static uint32_t sLuaCostCap;
+
+static uint32_t arena_cost(size_t n) { return (uint32_t)(((n + 31u + 15u) & ~(size_t)15u) + 16u); }
+
+static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
+{
+    (void)ud;
+    if (nsize == 0) {
+        if (ptr) {
+            game_stat_lua_blocks--;
+            game_stat_lua_bytes -= (uint32_t)osize;
+            game_stat_lua_cost -= arena_cost(osize);
+            free(ptr);
+        }
+        return NULL;
+    }
+    uint32_t old_cost = ptr ? arena_cost(osize) : 0, new_cost = arena_cost(nsize);
+    if (sLuaCostCap && new_cost > old_cost && game_stat_lua_cost - old_cost + new_cost > sLuaCostCap) {
+        game_stat_lua_failures++;
+        return NULL;
+    }
+    void *p = realloc(ptr, nsize);
+    if (!p) {
+        game_stat_lua_failures++;
+        return NULL;
+    }
+    if (!ptr) game_stat_lua_blocks++;
+    game_stat_lua_bytes += (uint32_t)nsize - (ptr ? (uint32_t)osize : 0u);
+    game_stat_lua_cost += new_cost - old_cost;
+    if (game_stat_lua_cost > game_stat_lua_cost_peak) game_stat_lua_cost_peak = game_stat_lua_cost;
+    return p;
+}
+
+void game_set_lua_cap(uint32_t bytes) { sLuaCostCap = bytes; }
+
+static int sGcPause = 110, sGcStepMul = 400;
+void game_set_gc(int pause, int stepmul) { sGcPause = pause; sGcStepMul = stepmul; }
+
+/* ------------------------------------------------------------------------------------ */
 /* Start-up                                                                             */
 /* ------------------------------------------------------------------------------------ */
 
@@ -1264,8 +1332,14 @@ int game_init(float logical_w, float logical_h)
     G.physicsEnabled = true;
     G.worldScale = G.appScale = G.appPrevScale = 1.0f;
 
-    lua_State *L = G.L = luaL_newstate();
+    lua_State *L = G.L = lua_newstate(lua_alloc, NULL);
     if (!L) return 1;
+    /* Lua 5.1 raises "not enough memory" without collecting first, and by default lets
+     * the heap double between collections: on the nano's small arena that ended levels
+     * with a script error (a blank sky-coloured screen). Start each cycle as soon as the
+     * last one ends and collect faster than the script allocates. */
+    lua_gc(L, LUA_GCSETPAUSE, sGcPause);
+    lua_gc(L, LUA_GCSETSTEPMUL, sGcStepMul);
     ab_open_libs(L);
     res_register(L);
 
@@ -1373,3 +1447,4 @@ void game_gl_lost(void)
 
 uint32_t game_bg_color(void) { return G.bgColor; }
 int game_wants_exit(void) { return G.wantExit; }
+int game_failed(void) { return G.failed; }

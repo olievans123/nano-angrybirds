@@ -48,6 +48,12 @@ void game_gl_lost(void);                                           /* GL objects
 uint32_t game_bg_color(void);                                      /* 0xRRGGBB to clear with */
 int  game_wants_exit(void);
 int  game_lua_kb(void);
+/* Script memory: live blocks/bytes, their cost in the nano arena, failed allocations. */
+extern uint32_t game_stat_lua_blocks, game_stat_lua_bytes, game_stat_lua_cost, game_stat_lua_cost_peak;
+extern uint32_t game_stat_lua_failures, game_stat_lua_recoveries;
+void game_set_lua_cap(uint32_t bytes);                             /* test: fail script allocations beyond this cost */
+void game_set_gc(int pause, int stepmul);                          /* test: collector tuning, before game_init */
+int  game_failed(void);                                            /* a script error stopped the game */
 extern uint32_t game_stat_mask_builds;
 extern uint32_t game_stat_rotation_builds, game_stat_rotation_hits;
 void game_debug_dump(const char *names);                           /* test hook: log script globals */

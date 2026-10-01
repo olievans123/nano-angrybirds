@@ -328,6 +328,9 @@ static int headless(int frames, int shot_every)
             i, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures, gfx_stat_tex_bytes / 1024u);
     fprintf(stderr, "peaks: %d draws, %d quads, %u KB of texture, Lua heap %d KB (now %d KB); %.0f us/frame on this machine\n",
             sPeakDraws, sPeakQuads, sPeakTex / 1024u, sLuaPeakKb, game_lua_kb(), (double)sFrameUs / (double)(i ? i : 1));
+    fprintf(stderr, "script memory: %u blocks, %u KB; nano arena cost %u KB now, %u KB peak; %u failed allocations, %u recoveries%s\n",
+            game_stat_lua_blocks, game_stat_lua_bytes / 1024u, game_stat_lua_cost / 1024u,
+            game_stat_lua_cost_peak / 1024u, game_stat_lua_failures, game_stat_lua_recoveries, game_failed() ? "; GAME STOPPED BY A SCRIPT ERROR" : "");
     fprintf(stderr, "resource work: %u file reads, %u ground atlas builds\n", sReads, sMaskBuilds);
     fprintf(stderr, "render work: %llu draws, %llu merges, %llu batch state calls\n",
             (unsigned long long)sTotalDraws, (unsigned long long)sTotalMerges, (unsigned long long)sTotalStateCalls);
@@ -353,6 +356,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-i")) { load_script(v); i++; }
         else if (!strcmp(a, "-f")) { sFps = atoi(v); i++; }
         else if (!strcmp(a, "-j")) { sJitter = 1; }
+        else if (!strcmp(a, "-G")) { int p = 200, m = 200; sscanf(v, "%d,%d", &p, &m); game_set_gc(p, m); i++; }
+        else if (!strcmp(a, "-M")) { game_set_lua_cap((uint32_t)atoi(v) * 1024u); i++; }   /* script memory cap, KB of nano arena */
         else if (!strcmp(a, "-x")) { sWinScale = atoi(v); i++; }
         else if (!strcmp(a, "-D")) { sDumpNames = v; i++; }          /* log these script globals ... */
         else if (!strcmp(a, "-De")) { sDumpEvery = atoi(v); i++; }   /* ... every N frames ... */

@@ -291,6 +291,16 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
         game_start = plat_time_us();
         game_frame(dt, &t);
         game_end = plat_time_us();
+        {
+            /* A script error stops the game: save the log once so the reason can be read. */
+            static int saved;
+            if (game_failed() && !saved) {
+                saved = 1;
+                printf("game stopped by a script error; Lua %d KB, arena free %u\n", game_lua_kb(),
+                       (unsigned)port_arena_free_bytes());
+                port_log_flush(LOG_PATH);
+            }
+        }
         if (sLevelTraceFrames) port_checkpoint("level-updated", "", n);
         gfx_end_frame();
         finish = plat_time_us();

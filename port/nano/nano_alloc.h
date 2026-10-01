@@ -6,4 +6,5 @@ typedef struct {
 } PortAllocStats;
 void port_alloc_stats_reset(void);
 PortAllocStats port_alloc_stats(void);
+uint32_t port_arena_free_bytes(void);   /* bytes on the free lists right now */
 #endif
