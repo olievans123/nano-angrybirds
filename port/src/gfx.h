@@ -12,6 +12,10 @@ extern "C" {
 #endif
 
 void gfx_set_texture_budget(uint32_t bytes);
+/* Draw fully opaque sprites and rectangles without blending (same pixels, less GPU work). */
+extern int gfx_opaque_fast;
+extern int gfx_debug_dump;            /* host: log the next frame's draw batches */
+unsigned gfx_tex_gl_name(int tex);
 
 enum { GFX_FMT_RGB565 = 0, GFX_FMT_RGBA4444 = 1, GFX_FMT_RGBA8888 = 2 };
 enum { GFX_BLEND_ALPHA = 0, GFX_BLEND_ADD = 1, GFX_BLEND_NONE = 2 };

@@ -25,6 +25,7 @@ typedef struct AbSprite {
     uint16_t page;            /* texture page of the sheet */
     uint16_t tx, ty, tw, th;  /* texel rectangle in that page */
     AbSheet *sheet;
+    uint8_t  opaque;          /* every texel is opaque (known once its page has been loaded) */
 } AbSprite;
 
 /* Load <name>.sht (name without extension, e.g. "INGAME"). Returns NULL if missing.

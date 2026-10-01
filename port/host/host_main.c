@@ -153,7 +153,8 @@ static void screenshot(const char *name)
 static PlatTouches sTouch;
 static uint32_t sFrame;
 
-static uint64_t sFrameUs;
+static uint64_t sFrameUs, sProf[PROF_COUNT], sProfLate[PROF_COUNT + 2];
+static int sProfFrom = 1000, sProfFrames;
 static int sLuaPeakKb, sPeakDraws, sPeakQuads;
 static uint32_t sPeakTex;
 static uint64_t sTotalDraws, sTotalMerges, sTotalStateCalls;
@@ -161,8 +162,12 @@ static uint64_t sRotationBuilds, sRotationHits;
 static const char *sDumpNames;
 static int sDumpEvery = 1, sDumpFrom;
 
+static int sBatchDumpFrame = -1;
+extern void assets_debug_pages(void);
+
 static void run_frame(float dt)
 {
+    if ((int)sFrame == sBatchDumpFrame) { assets_debug_pages(); gfx_debug_dump = 1; }
     if (sDumpNames && (int)sFrame >= sDumpFrom && (sFrame % (uint32_t)sDumpEvery) == 0) {
         fprintf(stderr, "[%u] ", sFrame);
         game_debug_dump(sDumpNames);
@@ -182,6 +187,8 @@ static void run_frame(float dt)
         sTotalStateCalls += gfx_stat_state_calls;
         sFrameUs += plat_time_us() - t0;
     }
+    { int k; for (k = 0; k < PROF_COUNT; k++) sProf[k] += game_prof_us[k]; }
+    if (sFrame >= (uint32_t)sProfFrom) { int k; sProfFrames++; for (k = 0; k < PROF_COUNT; k++) sProfLate[k] += game_prof_us[k]; sProfLate[PROF_COUNT] += gfx_stat_draws; sProfLate[PROF_COUNT + 1] += gfx_stat_quads; }
     if (game_lua_kb() > sLuaPeakKb) sLuaPeakKb = game_lua_kb();
     if (gfx_stat_draws > sPeakDraws) sPeakDraws = gfx_stat_draws;
     if (gfx_stat_quads > sPeakQuads) sPeakQuads = gfx_stat_quads;
@@ -328,6 +335,12 @@ static int headless(int frames, int shot_every)
             i, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures, gfx_stat_tex_bytes / 1024u);
     fprintf(stderr, "peaks: %d draws, %d quads, %u KB of texture, Lua heap %d KB (now %d KB); %.0f us/frame on this machine\n",
             sPeakDraws, sPeakQuads, sPeakTex / 1024u, sLuaPeakKb, game_lua_kb(), (double)sFrameUs / (double)(i ? i : 1));
+    if (sProfFrames)
+        fprintf(stderr, "profile from frame %d (us/frame): pre %.1f, physics %.1f, writeback %.1f, script %.1f of which draw natives %.1f; %.1f draws, %.1f quads\n",
+                sProfFrom, (double)sProfLate[PROF_PRE] / sProfFrames, (double)sProfLate[PROF_PHYSICS] / sProfFrames,
+                (double)sProfLate[PROF_WRITEBACK] / sProfFrames, (double)sProfLate[PROF_SCRIPT] / sProfFrames,
+                (double)sProfLate[PROF_NATIVE] / sProfFrames, (double)sProfLate[PROF_COUNT] / sProfFrames,
+                (double)sProfLate[PROF_COUNT + 1] / sProfFrames);
     fprintf(stderr, "script memory: %u blocks, %u KB; nano arena cost %u KB now, %u KB peak; %u failed allocations, %u recoveries%s\n",
             game_stat_lua_blocks, game_stat_lua_bytes / 1024u, game_stat_lua_cost / 1024u,
             game_stat_lua_cost_peak / 1024u, game_stat_lua_failures, game_stat_lua_recoveries, game_failed() ? "; GAME STOPPED BY A SCRIPT ERROR" : "");
@@ -357,6 +370,9 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-f")) { sFps = atoi(v); i++; }
         else if (!strcmp(a, "-j")) { sJitter = 1; }
         else if (!strcmp(a, "-G")) { int p = 200, m = 200; sscanf(v, "%d,%d", &p, &m); game_set_gc(p, m); i++; }
+        else if (!strcmp(a, "-X")) { sBatchDumpFrame = atoi(v); i++; }   /* log the draw batches of frame N */
+        else if (!strcmp(a, "-B")) { gfx_opaque_fast = atoi(v); i++; }   /* 0: blend everything, as before */
+        else if (!strcmp(a, "-P")) { sProfFrom = atoi(v); i++; }      /* profile averages from frame N */
         else if (!strcmp(a, "-M")) { game_set_lua_cap((uint32_t)atoi(v) * 1024u); i++; }   /* script memory cap, KB of nano arena */
         else if (!strcmp(a, "-x")) { sWinScale = atoi(v); i++; }
         else if (!strcmp(a, "-D")) { sDumpNames = v; i++; }          /* log these script globals ... */

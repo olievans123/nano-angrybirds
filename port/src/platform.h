@@ -26,6 +26,20 @@ extern uint32_t game_stat_physics_us;
 #define port_checkpoint(stage, detail, value) ((void)0)
 #endif
 
+/* Where a frame's time goes (microseconds, reset by game_frame): before the script,
+ * physics, writing object state to the script, the script's update call in total, and
+ * the part of that spent inside drawing natives. */
+enum { PROF_PRE, PROF_PHYSICS, PROF_WRITEBACK, PROF_SCRIPT, PROF_NATIVE, PROF_COUNT };
+extern uint32_t game_prof_us[PROF_COUNT];
+extern uint32_t game_stat_steps;                                   /* physics steps run this frame */
+#define PROF_TIMED(fn) \
+    static int fn##_timed(lua_State *L) { \
+        uint64_t t_ = plat_time_us(); \
+        int r_ = fn(L); \
+        game_prof_us[PROF_NATIVE] += (uint32_t)(plat_time_us() - t_); \
+        return r_; \
+    }
+
 /* Audio. `file` is relative to the data directory ("SFX/x.wav", "Music/x.mp3").
  * plat_audio_play returns the clip's length in seconds (0 if nothing is played), which is
  * what res.isAudioPlaying reports on. plat_audio_stop(NULL) stops everything. */

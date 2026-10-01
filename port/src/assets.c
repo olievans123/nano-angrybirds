@@ -211,6 +211,26 @@ int assets_make_room(uint32_t need)
     return 1;
 }
 
+/* Mark the sprites of a just-read page that have no transparent texel, so they can be
+ * drawn without blending. */
+static void mark_opaque(AbSheet *sh, int page, const Page *pg, const uint16_t *px)
+{
+    int i, x, y;
+    for (i = 0; i < sh->nsprites; i++) {
+        AbSprite *sp = &sh->sprites[i];
+        if (sp->page != page || sp->tx + sp->tw > pg->w || sp->ty + sp->th > pg->h)
+            continue;
+        sp->opaque = 1;
+        if (!pg->fmt)
+            continue;                           /* RGB565: no alpha at all */
+        for (y = 0; y < sp->th && sp->opaque; y++) {
+            const uint16_t *row = px + (size_t)(sp->ty + y) * pg->w + sp->tx;
+            for (x = 0; x < sp->tw; x++)
+                if ((row[x] & 15u) != 15u) { sp->opaque = 0; break; }
+        }
+    }
+}
+
 int assets_sprite_texture(const AbSprite *sprite, int *tex_w, int *tex_h)
 {
     AbSheet *sh = sprite->sheet;
@@ -229,8 +249,11 @@ int assets_sprite_texture(const AbSprite *sprite, int *tex_w, int *tex_h)
         snprintf(path, sizeof path, "%s.p%d", sh->name, (int)sprite->page);
         port_checkpoint("texture-read", path, want);
         px = plat_read_file(path, &size, 0);
-        if (px && size >= want)
+        if (px && size >= want) {
             pg->tex = gfx_tex_create(pg->w, pg->h, pg->fmt ? GFX_FMT_RGBA4444 : GFX_FMT_RGB565, px, 1, pg->repeat);
+            if (pg->tex)
+                mark_opaque(sh, sprite->page, pg, (const uint16_t *)px);
+        }
         if (!pg->tex) {
             plat_log("texture page %s: load failed", path);
             pg->failed = 1;
@@ -250,6 +273,17 @@ void assets_page_size(const AbSprite *sprite, int *tex_w, int *tex_h)
 const AbSprite *assets_first_sprite(const AbSheet *sheet)
 {
     return sheet && sheet->nsprites ? &sheet->sprites[0] : NULL;
+}
+
+/* Test hook: which page each loaded texture is. */
+void assets_debug_pages(void)
+{
+    int s, i;
+    for (s = 0; s < MAX_SHEETS; s++)
+        for (i = 0; sSheets[s].sprites && i < sSheets[s].npages; i++)
+            if (sSheets[s].pages[i].tex)
+                plat_log("texture %u = %s.p%d %dx%d %s", gfx_tex_gl_name(sSheets[s].pages[i].tex), sSheets[s].name, i,
+                         sSheets[s].pages[i].w, sSheets[s].pages[i].h, sSheets[s].pages[i].fmt ? "4444" : "565");
 }
 
 void assets_begin_frame(void) { sFrame++; }

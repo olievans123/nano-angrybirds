@@ -14,6 +14,8 @@
 extern "C" void ab_open_libs(lua_State *L);
 
 Game G;
+uint32_t game_prof_us[PROF_COUNT];
+uint32_t game_stat_steps;
 uint32_t game_stat_lua_recoveries;
 #ifdef AB_NANO
 uint32_t game_stat_physics_us;
@@ -1082,6 +1084,7 @@ static void game_update(float dt)
     env_set_number("screenWidth", gScreenW);
     env_set_number("screenHeight", gScreenH);
 
+    uint64_t prof_t = plat_time_us();
     if (G.physicsEnabled) {
 #ifdef AB_NANO
         uint64_t physics_start = plat_time_us();
@@ -1092,6 +1095,7 @@ static void game_update(float dt)
             if (G.acc < STEP) break;
             if (G.acc < 2.0f * STEP) resetForces = true;
             G.world->Step(STEP, 10, 10, resetForces);
+            game_stat_steps++;
             G.acc -= STEP;
             if (G.acc > 2.0f * STEP) continue;       /* more than two steps pending: no snapshot */
             G.slot = (G.slot == 0) ? 1 : 0;
@@ -1123,6 +1127,8 @@ static void game_update(float dt)
         game_stat_physics_us = (uint32_t)(plat_time_us() - physics_start);
 #endif
     }
+    game_prof_us[PROF_PHYSICS] += (uint32_t)(plat_time_us() - prof_t);
+    prof_t = plat_time_us();
     bool moving = false, awakeAny = false, zeroTol = false;
     float volWood = 0.0f, volRock = 0.0f, volLight = 0.0f;
     for (ObjNode *n = obj_first(&it); n; n = obj_next(&it)) {
@@ -1181,10 +1187,13 @@ static void game_update(float dt)
     rolling_sound("rock_rolling", volRock);
     rolling_sound("light_rolling", volLight);
 
+    game_prof_us[PROF_WRITEBACK] += (uint32_t)(plat_time_us() - prof_t);
+    prof_t = plat_time_us();
     lua_pushnumber(L, dt);
     lua_pushnumber(L, dt);
     if (env_call("update", 2, 0) == 2)
         G.failed = true;
+    game_prof_us[PROF_SCRIPT] += (uint32_t)(plat_time_us() - prof_t);
     particles_update(dt);
 }
 
@@ -1398,10 +1407,14 @@ void game_frame(float dt, const PlatTouches *touches)
 #ifdef AB_NANO
     game_stat_physics_us = 0;
 #endif
+    memset(game_prof_us, 0, sizeof(game_prof_us));
+    game_stat_steps = 0;
     if (G.failed) return;
+    uint64_t prof_t = plat_time_us();
     assets_begin_frame();
     res_audio_tick(dt);
     game_input(touches);
+    game_prof_us[PROF_PRE] += (uint32_t)(plat_time_us() - prof_t);
     game_update(dt);
     lua_settop(G.L, 0);
 }

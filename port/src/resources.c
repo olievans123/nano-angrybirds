@@ -524,6 +524,9 @@ static int l_setTrackVolume(lua_State *L)
     return 0;
 }
 
+PROF_TIMED(l_drawSprite)
+PROF_TIMED(l_drawString)
+
 static int l_nop(lua_State *L) { (void)L; return 0; }
 static int l_openURL(lua_State *L) { lua_pushboolean(L, 0); return 1; }
 
@@ -540,8 +543,8 @@ static const luaL_Reg reslib[] = {
     { "loadLocale", l_loadLocale },
     { "useLocale", l_useLocale },
     { "useFont", l_useFont },
-    { "drawSprite", l_drawSprite },
-    { "drawString", l_drawString },
+    { "drawSprite", l_drawSprite_timed },
+    { "drawString", l_drawString_timed },
     { "getString", l_getString },
     { "playAudio", l_playAudio },
     { "stopAudio", l_stopAudio },

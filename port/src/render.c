@@ -75,7 +75,13 @@ void render_image_part(const AbSprite *s, float left, float top, float sx, float
         float u0 = (float)s->tx + sx * fu, v0 = (float)s->ty + sy * fv;
         float u1 = (float)s->tx + (sx + sw) * fu, v1 = (float)s->ty + (sy + sh) * fv;
         float uv[8] = {u0, v0, u1, v0, u1, v1, u0, v1};
-        gfx_quad(tex, tw, th, xy, uv, 0xFFFFFFFFu);
+        if (s->opaque && gfx_opaque_fast) {
+            gfx_set_blend(GFX_BLEND_NONE);
+            gfx_quad(tex, tw, th, xy, uv, 0xFFFFFFFFu);
+            gfx_set_blend(GFX_BLEND_ALPHA);
+        } else {
+            gfx_quad(tex, tw, th, xy, uv, 0xFFFFFFFFu);
+        }
     }
 }
 

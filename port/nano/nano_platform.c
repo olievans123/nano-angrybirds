@@ -265,6 +265,12 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
             rc = game_init(sLogW, sLogH);
             printf("game_init: %d, %u ms, Lua heap %d KB, heap free %u\n", rc,
                    (unsigned)((plat_time_us() - t0) / 1000u), game_lua_kb(), (unsigned)hb_os_heap_free());
+            {
+                /* what one clock read costs: the per-frame profile reads it ~200 times */
+                uint64_t c0 = plat_time_us(), c1 = c0;
+                for (int k = 0; k < 1000; k++) c1 = plat_time_us();
+                printf("clock: 1000 reads in %u us\n", (unsigned)(c1 - c0));
+            }
             port_crumb("init", (uint32_t)rc, hb_os_heap_free());
             port_log_flush(LOG_PATH);
             if (rc) { sDead = 1; return; }

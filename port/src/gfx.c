@@ -46,6 +46,8 @@ static int sMovedVerts, sDrawTextured, sDrawClipOn;
 static GLuint sDrawTexture;
 static float sDrawClip[4];
 
+int gfx_opaque_fast = 1;
+int gfx_debug_dump;
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 uint32_t gfx_stat_tex_bytes;
 uint32_t gfx_stat_upload_us;
@@ -135,6 +137,8 @@ void gfx_tex_destroy(int tex)
     sTex[tex].pending_delete = 0;
     sCurTex = -1;
 }
+
+unsigned gfx_tex_gl_name(int tex) { return tex > 0 && tex <= MAX_TEX ? sTex[tex].gl : 0; }
 
 void gfx_forget_all(void)
 {
@@ -348,6 +352,15 @@ void gfx_end_frame(void)
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vert), (const void *)offsetof(Vert, c));
             glTexCoordPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, u));
             gfx_stat_state_calls++; /* texture coordinates share one VBO throughout the frame */
+#ifndef AB_NANO
+            if (gfx_debug_dump) {
+                for (int i = 0; i < sBatchCount; i++)
+                    plat_log("batch %2d: texture %u, %d quads, blend %d, bounds %.0f,%.0f..%.0f,%.0f", i,
+                             (unsigned)sBatches[i].texture, sBatches[i].count / 6, sBatches[i].blend,
+                             sBatches[i].bounds[0], sBatches[i].bounds[1], sBatches[i].bounds[2], sBatches[i].bounds[3]);
+                gfx_debug_dump = 0;
+            }
+#endif
             for (int i = 0; i < sBatchCount; i++) draw_batch(&sBatches[i]);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         } else {

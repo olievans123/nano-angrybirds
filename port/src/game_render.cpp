@@ -135,7 +135,10 @@ static uint32_t premultiply(uint32_t argb)
 /* gr::Context::fillRect2D @000ab0e0 */
 static void fill_rect(uint32_t argb, int x, int y, int w, int h)
 {
+    bool opaque = (argb >> 24) == 255u && gfx_opaque_fast;
+    if (opaque) gfx_set_blend(GFX_BLEND_NONE);
     render_quad(0, 0, 0, (float)x, (float)y, (float)w, (float)h, 0.f, 0.f, 0.f, 0.f, premultiply(argb));
+    if (opaque) gfx_set_blend(GFX_BLEND_ALPHA);
 }
 
 /* drawRect(r, g, b, a, x1, y1, x2, y2, keepState) @00007898: colour 0..1; without keepState the
@@ -628,16 +631,22 @@ static int l_clipText(lua_State *L)
 
 static int l_nop(lua_State *L) { (void)L; return 0; }
 
+PROF_TIMED(l_drawGame)
+PROF_TIMED(l_drawBackground)
+PROF_TIMED(l_drawForeground)
+PROF_TIMED(l_drawRect)
+PROF_TIMED(l_drawLine2D)
+
 static const luaL_Reg kRenderNatives[] = {
     { "setRenderState", l_setRenderState },
-    { "drawGameNative", l_drawGame },
-    { "drawBackgroundNative", l_drawBackground },
-    { "drawForegroundNative", l_drawForeground },
+    { "drawGameNative", l_drawGame_timed },
+    { "drawBackgroundNative", l_drawBackground_timed },
+    { "drawForegroundNative", l_drawForeground_timed },
     { "drawParticlesNative", l_drawParticles },
     { "setTheme", l_setTheme },
-    { "drawRect", l_drawRect },
+    { "drawRect", l_drawRect_timed },
     { "drawTexturedRect", l_nop },              /* not used by the 1.0 scripts */
-    { "drawLine2D", l_drawLine2D },
+    { "drawLine2D", l_drawLine2D_timed },
     { "clipText", l_clipText },
     { "startNewTrajectory", l_startNewTrajectory },
     { "addToTrajectory", l_addToTrajectory },
