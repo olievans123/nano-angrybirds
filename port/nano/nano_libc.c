@@ -16,16 +16,20 @@
 #include "hb_sdk.h"
 #include "hb_heap.h"
 
+/* newlib exposes these as macros as well as functions. */
+#undef ferror
+#undef feof
+
 #define AB_DIR "/Apps/Data/AngryBirds"
 
 /* ---- heap ---- */
 /* All of the app's allocations come from ONE OS block registered as the app's aux block
  * (hb_heap.h): the resident frees that block when it unloads the app (switching to
  * another app), and nothing else. Separate hb_os_alloc blocks outlived the app and left
- * the next one (Mario 64) short of memory. If the arena is ever full, allocations fall
- * back to the OS heap (those would leak on unload, but the game keeps running). */
+ * the next one (Mario 64) short of memory. Exhaustion returns NULL; it must not consume
+ * the GL reserve or leave untracked allocations behind when the app unloads. */
 #ifndef PORT_ARENA_SIZE
-#define PORT_ARENA_SIZE 0x300000u   /* Lua heap ~1.5 MB + physics + sheet indexes + one texture page being loaded (<= 1 MB) */
+#define PORT_ARENA_SIZE 0x400000u   /* Lua + physics + sheet indexes + temporary ground-mask pages */
 #endif
 #define PORT_ARENA_MIN 0x200000u
 #define GL_RESERVE     0x600000u   /* OS heap left for the GL driver and the game's textures (budget in nano_platform.c) */
@@ -120,7 +124,6 @@ void *memalign(size_t align, size_t size) {
     if (align < 16) align = 16;
     uint32_t n = size + align + sizeof(AllocHdr);
     uint8_t *raw = arena_alloc(n);
-    if (!raw) raw = hb_os_alloc(n);
     if (!raw) {
         printf("OOM: %u bytes\n", (unsigned)size);
         return NULL;
@@ -165,14 +168,19 @@ static void log_write(const char *s, size_t n) {
 }
 
 void port_log_flush(const char *path) {
-    static char out[LOG_SIZE];
     uint32_t n = sLogHead < LOG_SIZE ? sLogHead : LOG_SIZE;
+    if (!n) return;
+    /* As for reads, use a heap buffer aligned for the OS storage path. An
+     * aligned declaration in a relocatable image is only as aligned as its base. */
+    char *out = memalign(64, (n + 4095u) & ~4095u);
+    if (!out) return;
     uint32_t start = sLogHead - n;
     for (uint32_t i = 0; i < n; i++)
         out[i] = sLog[(start + i) % LOG_SIZE];
     hb_fs_mkdir("/Apps/Data");
     hb_fs_mkdir(AB_DIR);
     hb_fs_write(path, out, n);
+    free(out);
 }
 
 static void put_u(char **o, char *end, unsigned long long v, int base, int upper, int width, char padc, int neg) {
@@ -231,7 +239,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
                 if (!s) s = "(null)";
                 int n = (int)strlen(s);
                 if (prec >= 0 && n > prec) n = prec;
-                if (!left) for (int k = n; k < width; k++) if (o < end) *o++ = ' ', total++; else total++;
+                if (!left) for (int k = n; k < width; k++) { if (o < end) *o++ = ' '; total++; }
                 for (int k = 0; k < n; k++) { if (o < end) *o++ = s[k]; total++; }
                 if (left) for (int k = n; k < width; k++) { if (o < end) *o++ = ' '; total++; }
                 continue;

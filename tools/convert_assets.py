@@ -2,8 +2,8 @@
 """Convert Angry Birds 1.0's data folder into what the nano port loads.
 
 The game logic (Lua bytecode), levels, text and font tables are copied as they are. Sprite
-sheets are rebuilt: every sprite is cut out of its sheet, scaled by --scale (the nano
-draws the 320-pixel-high game on a 240-pixel-high panel, so 0.75 gives one texel per
+sheets are rebuilt: every sprite is cut out of its sheet, scaled by --scale (0.5 is the
+nano default for its 3 MiB live texture budget; 0.75 gives one texel per panel
 pixel), and packed into power-of-two 16-bit pages the nano's GL driver accepts (no PNG or
 PVRTC decoding on the device, no thin textures).
 
@@ -140,7 +140,7 @@ def pot(n):
     return p
 
 
-def pack(rects, max_size):
+def pack(rects, max_size, max_height):
     """Pack (w, h) rects (gutter included) into power-of-two pages, trying several page
     shapes and keeping the layout with the least texture memory."""
     best = None
@@ -150,6 +150,8 @@ def pack(rects, max_size):
         shapes += [(size, size), (size, size // 2)]
         size //= 2
     for mw, mh in shapes:
+        if mh > max_height:
+            continue
         if any(w > mw or h > mh for w, h in rects):
             continue
         placed, sizes = pack_shelves(rects, mw, mh)
@@ -198,7 +200,7 @@ def pack_shelves(rects, max_w, max_h):
     return out, sizes
 
 
-def convert_sheet(src_dir, dat, out_dir, scale, max_page, repeat_sprites, stats, font=False):
+def convert_sheet(src_dir, dat, out_dir, scale, max_page, max_height, repeat_sprites, stats, font=False):
     if font:
         image_name, sprites, leading, tracking = read_font(os.path.join(src_dir, dat))
         open(os.path.join(out_dir, dat[:-4] + '.fnt'), 'wb').write(struct.pack('<hh', leading, tracking))
@@ -230,15 +232,21 @@ def convert_sheet(src_dir, dat, out_dir, scale, max_page, repeat_sprites, stats,
             tw, th = pot(max(1, round(s['w'] * scale))), pot(max(1, round(s['h'] * scale)))
             if tw > s['w']: tw //= 2
             if th > s['h']: th //= 2
+            tw, th = min(tw, max_page), min(th, max_height)
             cut.append(scale_rgba(crop, tw, th))
             rects.append(None)
             continue
         tw, th = max(1, round(s['w'] * scale)), max(1, round(s['h'] * scale))
+        # Large backgrounds/comics must fit the device's small texture pages.
+        # Their logical rectangles stay unchanged; rendering already maps each
+        # sprite's own texel rectangle onto its original game dimensions.
+        fit = min(1.0, (max_page - 2 * GUTTER) / tw, (max_height - 2 * GUTTER) / th)
+        tw, th = max(1, int(tw * fit)), max(1, int(th * fit))
         cut.append(scale_rgba(crop, tw, th))
         rects.append((tw + 2 * GUTTER, th + 2 * GUTTER))
 
     packed_idx = [i for i, r in enumerate(rects) if r is not None and r != 'child']
-    placed, sizes = pack([rects[i] for i in packed_idx], max_page) if packed_idx else ([], [])
+    placed, sizes = pack([rects[i] for i in packed_idx], max_page, max_height) if packed_idx else ([], [])
     pages = [np.zeros((h, w, 4), np.uint8) for (w, h) in sizes]
     repeat_flags = [0] * len(pages)
     entries = [None] * len(sprites)
@@ -284,32 +292,64 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src', help="the app's data folder (AngryBirds.app/data)")
     ap.add_argument('out')
-    ap.add_argument('--scale', type=float, default=0.75)
+    ap.add_argument('--scale', type=float, default=0.5,
+                    help='texture resolution relative to original (nano default: 0.5)')
     ap.add_argument('--max-page', type=int, default=1024)
+    ap.add_argument('--max-page-height', type=int,
+                    help='page height limit; defaults to --max-page (nano test profile: 256 by 128)')
     args = ap.parse_args()
+    if not 0 < args.scale <= 1:
+        ap.error('--scale must be greater than zero and at most one')
+    args.max_page_height = args.max_page_height or args.max_page
+    if any(n < 128 or n & (n - 1) for n in (args.max_page, args.max_page_height)):
+        ap.error('page limits must be powers of two of at least 128')
     os.makedirs(args.out, exist_ok=True)
 
     repeat = {'THEME_GROUND_TEXTURE_1', 'THEME_GROUND_TEXTURE_2', 'THEME_GROUND_TEXTURE_3'}
     stats = dict(bytes=0, pages=0)
+    generated = set()
+
+    def record_sheet(base, pages, font=False):
+        if len(pages) > 8:
+            raise ValueError('%s exceeds the nano limit of 8 pages per sheet' % base)
+        generated.add(base + '.sht')
+        generated.update('%s.p%d' % (base, i) for i in range(len(pages)))
+        if font:
+            generated.add(base + '.fnt')
     for name in sorted(os.listdir(args.src)):
         p = os.path.join(args.src, name)
         if name.endswith('.lua'):
             shutil.copy(p, os.path.join(args.out, name))
+            generated.add(name)
         elif name.endswith('.dat'):
             head = open(p, 'rb').read(64)
             n = struct.unpack_from('>H', head, 0)[0]
             img = head[2:2 + n]
             if name.startswith('TEXTS_'):
                 shutil.copy(p, os.path.join(args.out, name))
+                generated.add(name)
                 continue
             if name.startswith('FONT_'):
-                base, count, pages = convert_sheet(args.src, name, args.out, args.scale, args.max_page, repeat, stats, font=True)
+                base, count, pages = convert_sheet(args.src, name, args.out, args.scale, args.max_page, args.max_page_height, repeat, stats, font=True)
+                record_sheet(base, pages, font=True)
                 print('%-16s %3d glyphs  -> %s' % (base, count, ' '.join('%dx%d' % p for p in pages)))
                 continue
             if img.endswith((b'.pvr', b'.png')):
-                base, count, pages = convert_sheet(args.src, name, args.out, args.scale, args.max_page, repeat, stats)
+                base, count, pages = convert_sheet(args.src, name, args.out, args.scale, args.max_page, args.max_page_height, repeat, stats)
+                record_sheet(base, pages)
                 print('%-16s %3d sprites -> %s' % (base, count, ' '.join('%dx%d' % p for p in pages)))
     print('%d pages, %.2f MB of texture at scale %g' % (stats['pages'], stats['bytes'] / 1048576.0, args.scale))
+    # The nano avoids its OS file-size query. Keep the manifest bounded by the
+    # loader's fixed table and omit saves/logs that may live alongside the data.
+    files = sorted(generated)
+    if len(files) > 200 or any(len(n.encode('ascii')) >= 48 for n in files):
+        raise ValueError('asset names/count exceed the nano manifest limits')
+    manifest = ''.join('%s %d\n' % (n, os.path.getsize(os.path.join(args.out, n))) for n in files)
+    if len(manifest) >= 16384:
+        raise ValueError('manifest exceeds the nano read buffer')
+    with open(os.path.join(args.out, 'files.lst'), 'w', encoding='ascii') as f:
+        f.write(manifest)
+    print('files.lst: %d files' % len(files))
 
 
 if __name__ == '__main__':

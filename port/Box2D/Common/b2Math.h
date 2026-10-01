@@ -72,7 +72,8 @@ struct b2Vec2
 	b2Vec2() {}
 
 	/// Construct using coordinates.
-	b2Vec2(float32 x, float32 y) : x(x), y(y) {}
+	// Port: constant initialization; the nano app has no static constructor runner.
+	constexpr b2Vec2(float32 x, float32 y) : x(x), y(y) {}
 
 	/// Set this vector to all zeros.
 	void SetZero() { x = 0.0f; y = 0.0f; }
@@ -196,18 +197,11 @@ struct b2Mat22
 	b2Mat22() {}
 
 	/// Construct this matrix using columns.
-	b2Mat22(const b2Vec2& c1, const b2Vec2& c2)
-	{
-		col1 = c1;
-		col2 = c2;
-	}
+	constexpr b2Mat22(const b2Vec2& c1, const b2Vec2& c2) : col1(c1), col2(c2) {}
 
 	/// Construct this matrix using scalars.
-	b2Mat22(float32 a11, float32 a12, float32 a21, float32 a22)
-	{
-		col1.x = a11; col1.y = a21;
-		col2.x = a12; col2.y = a22;
-	}
+	constexpr b2Mat22(float32 a11, float32 a12, float32 a21, float32 a22)
+		: col1(a11, a21), col2(a12, a22) {}
 
 	/// Construct this matrix using an angle. This matrix becomes
 	/// an orthonormal rotation matrix.
@@ -331,7 +325,7 @@ struct b2Transform
 	b2Transform() {}
 
 	/// Initialize using a position vector and a rotation matrix.
-	b2Transform(const b2Vec2& position, const b2Mat22& R) : position(position), R(R) {}
+	constexpr b2Transform(const b2Vec2& position, const b2Mat22& R) : position(position), R(R) {}
 
 	/// Set this to the identity transform.
 	void SetIdentity()

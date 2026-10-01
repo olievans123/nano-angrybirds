@@ -1,15 +1,38 @@
 /* gfx.c — batched 2D quads over OpenGL ES 1.1 (see gfx.h). */
 #include <string.h>
+#include <stddef.h>
 #include "gl.h"
 #include "gfx.h"
+#include "platform.h"
+
+#ifdef AB_NANO
+extern void port_crumb(const char *, uint32_t, uint32_t);
+#define GFX_TRACE(tag, a, b) port_crumb(tag, a, b)
+#else
+#define GFX_TRACE(tag, a, b) ((void)0)
+#endif
 
 #define MAX_TEX   64          /* the nano's GL driver reboots somewhere past ~80 live textures */
 #define MAX_VERTS 1536        /* 256 quads per batch */
+#define FRAME_VERTS 4096
+#define FRAME_BATCHES 256
 
 typedef struct { float x, y, u, v; uint32_t c; } Vert;
 
-static struct { unsigned gl; int w, h; uint32_t bytes; } sTex[MAX_TEX + 1];
+static struct { unsigned gl; int w, h, pending_delete; uint32_t bytes; } sTex[MAX_TEX + 1];
 static Vert sVerts[MAX_VERTS];
+/* On the nano, interleaving texture uploads with draws can reboot the device.
+ * Record a frame first; issue every draw only after its texture uploads finish. */
+typedef struct {
+    GLuint texture;
+    int first, count, blend, clip_on;
+    float clip[4];
+} Batch;
+static Vert sFrameVerts[FRAME_VERTS];
+static Batch sBatches[FRAME_BATCHES];
+static int sFrameCount, sBatchCount, sOverflow, sUploads;
+static GLuint sVbo;
+static uint32_t sTextureBudget = 3u << 20;
 static int sCount, sCurTex = -1, sBlend = -1, sWantBlend;
 static int sClipOn;
 static float sClip[4];
@@ -19,12 +42,18 @@ static int sDraws, sQuads;
 
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 uint32_t gfx_stat_tex_bytes;
+uint32_t gfx_stat_upload_us;
 
 int gfx_tex_create(int w, int h, int fmt, const void *pixels, int linear, int repeat)
 {
     int id;
     GLuint name = 0;
     GLenum glfmt, type;
+    uint32_t bytes = (uint32_t)w * (uint32_t)h * (fmt == GFX_FMT_RGBA8888 ? 4u : 2u);
+    if (bytes > sTextureBudget || gfx_stat_tex_bytes > sTextureBudget - bytes) {
+        plat_log("texture budget exceeded: %u + %u > %u", gfx_stat_tex_bytes, bytes, sTextureBudget);
+        return 0;
+    }
     for (id = 1; id <= MAX_TEX && sTex[id].gl; id++) {}
     if (id > MAX_TEX)
         return 0;
@@ -46,11 +75,27 @@ int gfx_tex_create(int w, int h, int fmt, const void *pixels, int linear, int re
     } else {
         glfmt = GL_RGBA; type = GL_UNSIGNED_BYTE;
     }
+    GFX_TRACE("tex-upload", ((uint32_t)w << 16) | (uint32_t)h, gfx_stat_tex_bytes);
+    port_checkpoint("texture-upload", fmt == GFX_FMT_RGB565 ? "RGB565" : "RGBA", bytes);
+    GLenum prior_error = glGetError();
+    if (prior_error) port_checkpoint("texture-state-error", "", prior_error);
+    uint64_t upload_start = plat_time_us();
     glTexImage2D(GL_TEXTURE_2D, 0, (GLint)glfmt, w, h, 0, glfmt, type, pixels);
+    gfx_stat_upload_us += (uint32_t)(plat_time_us() - upload_start);
+    GLenum error = glGetError();
+    if (error) {
+        plat_log("texture %dx%d rejected by GL: 0x%x", w, h, (unsigned)error);
+        port_checkpoint("texture-error", "upload rejected", error);
+        glDeleteTextures(1, &name);
+        return 0;
+    }
+    port_checkpoint("texture-ready", "", bytes);
+    sUploads++;
+    GFX_TRACE("tex-ready", name, gfx_stat_tex_bytes + bytes);
     sTex[id].gl = name;
     sTex[id].w = w;
     sTex[id].h = h;
-    sTex[id].bytes = (uint32_t)w * (uint32_t)h * (fmt == GFX_FMT_RGBA8888 ? 4u : 2u);
+    sTex[id].bytes = bytes;
     gfx_stat_textures++;
     gfx_stat_tex_bytes += sTex[id].bytes;
     return id;
@@ -63,19 +108,28 @@ void gfx_tex_destroy(int tex)
         return;
     gfx_flush();
     name = sTex[tex].gl;
+    for (int i = 0; i < sBatchCount; i++) {
+        if (sBatches[i].texture == name) {
+            sTex[tex].pending_delete = 1;
+            return; /* Keep its pixels and budget charged until the recorded draws finish. */
+        }
+    }
     glDeleteTextures(1, &name);
     gfx_stat_textures--;
     gfx_stat_tex_bytes -= sTex[tex].bytes;
     sTex[tex].gl = 0;
+    sTex[tex].pending_delete = 0;
     sCurTex = -1;
 }
 
 void gfx_forget_all(void)
 {
+    sVbo = 0;
     memset(sTex, 0, sizeof(sTex));
     gfx_stat_textures = 0;
     gfx_stat_tex_bytes = 0;
     sCount = 0;
+    sFrameCount = sBatchCount = 0;
     sCurTex = -1;
     sBlend = -1;
 }
@@ -94,7 +148,7 @@ static void apply_clip(void)
         int x1 = (int)((sClip[0] + sClip[2]) * sx + 0.999f), y1 = (int)((sClip[1] + sClip[3]) * sy + 0.999f);
         glEnable(GL_SCISSOR_TEST);
         if (sRot)   /* logical x runs down the panel, logical y right to left */
-            glScissor(y0, sPanelH - x1, y1 - y0, x1 - x0);
+            glScissor(sPanelW - y1, sPanelH - x1, y1 - y0, x1 - x0);
         else
             glScissor(x0, sPanelH - y1, x1 - x0, y1 - y0);
     }
@@ -107,6 +161,9 @@ void gfx_begin_frame(int panel_w, int panel_h, float logical_w, float logical_h,
     sLogW = logical_w; sLogH = logical_h;
     sDraws = sQuads = 0;
     sCount = 0;
+    sFrameCount = sBatchCount = sOverflow = 0;
+    sUploads = 0;
+    gfx_stat_upload_us = 0;
     sCurTex = -1;
     sBlend = -1;
     sWantBlend = GFX_BLEND_ALPHA;
@@ -128,7 +185,9 @@ void gfx_begin_frame(int panel_w, int panel_h, float logical_w, float logical_h,
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glDisable(GL_LIGHTING);
+#ifdef GL_ALPHA_TEST
     glDisable(GL_ALPHA_TEST);
+#endif
     glShadeModel(GL_SMOOTH);
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
     glEnableClientState(GL_VERTEX_ARRAY);
@@ -140,8 +199,28 @@ void gfx_flush(void)
 {
     if (!sCount)
         return;
-    if (sBlend != sWantBlend) {
-        sBlend = sWantBlend;
+    if (sBatchCount == FRAME_BATCHES || sFrameCount + sCount > FRAME_VERTS) {
+        if (!sOverflow) plat_log("renderer: frame capacity exceeded");
+        sOverflow = 1;
+        sCount = 0;
+        return;
+    }
+    Batch *batch = &sBatches[sBatchCount++];
+    batch->texture = sCurTex > 0 ? sTex[sCurTex].gl : 0;
+    batch->first = sFrameCount;
+    batch->count = sCount;
+    batch->blend = sWantBlend;
+    batch->clip_on = sClipOn;
+    memcpy(batch->clip, sClip, sizeof(sClip));
+    memcpy(sFrameVerts + sFrameCount, sVerts, sCount * sizeof(Vert));
+    sFrameCount += sCount;
+    sCount = 0;
+}
+
+static void draw_batch(const Batch *batch)
+{
+    if (sBlend != batch->blend) {
+        sBlend = batch->blend;
         if (sBlend == GFX_BLEND_NONE) {
             glDisable(GL_BLEND);
         } else {
@@ -150,29 +229,50 @@ void gfx_flush(void)
             glBlendFunc(GL_ONE, sBlend == GFX_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
         }
     }
-    glVertexPointer(2, GL_FLOAT, sizeof(Vert), &sVerts[0].x);
-    glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vert), &sVerts[0].c);
-    if (sCurTex > 0) {
+    sClipOn = batch->clip_on;
+    memcpy(sClip, batch->clip, sizeof(sClip));
+    apply_clip();
+    if (batch->texture) {
+        glBindTexture(GL_TEXTURE_2D, batch->texture);
         glEnable(GL_TEXTURE_2D);
         glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(2, GL_FLOAT, sizeof(Vert), &sVerts[0].u);
+        glTexCoordPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, u));
     } else {
         glDisable(GL_TEXTURE_2D);
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
     }
-    glDrawArrays(GL_TRIANGLES, 0, sCount);
+    glDrawArrays(GL_TRIANGLES, batch->first, batch->count);
     sDraws++;
-    sCount = 0;
 }
+
+void gfx_set_texture_budget(uint32_t bytes) { sTextureBudget = bytes; }
 
 void gfx_end_frame(void)
 {
     gfx_flush();
+    if (sUploads) port_checkpoint("draw-begin", "new textures", sFrameCount);
+    if (sFrameCount) {
+        if (!sVbo) glGenBuffers(1, &sVbo);
+        if (sVbo) {
+            glBindBuffer(GL_ARRAY_BUFFER, sVbo);
+            glBufferData(GL_ARRAY_BUFFER, sFrameCount * (GLsizeiptr)sizeof(Vert), sFrameVerts, GL_DYNAMIC_DRAW);
+            glVertexPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, x));
+            glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vert), (const void *)offsetof(Vert, c));
+            for (int i = 0; i < sBatchCount; i++) draw_batch(&sBatches[i]);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        } else {
+            plat_log("renderer: vertex buffer allocation failed");
+        }
+    }
+    sBatchCount = sFrameCount = 0;
+    for (int i = 1; i <= MAX_TEX; i++)
+        if (sTex[i].pending_delete) gfx_tex_destroy(i);
     glDisable(GL_SCISSOR_TEST);
     glDisableClientState(GL_COLOR_ARRAY);
     glDisableClientState(GL_TEXTURE_COORD_ARRAY);
     gfx_stat_draws = sDraws;
     gfx_stat_quads = sQuads;
+    if (sUploads) port_checkpoint("draw-end", "new textures", sDraws);
 }
 
 void gfx_set_clip(float x, float y, float w, float h)
@@ -183,7 +283,6 @@ void gfx_set_clip(float x, float y, float w, float h)
     gfx_flush();
     sClipOn = on;
     sClip[0] = x; sClip[1] = y; sClip[2] = w; sClip[3] = h;
-    apply_clip();
 }
 
 void gfx_set_blend(int mode)
@@ -200,8 +299,6 @@ static void bind(int tex)
         return;
     gfx_flush();
     sCurTex = tex;
-    if (tex > 0)
-        glBindTexture(GL_TEXTURE_2D, sTex[tex].gl);
 }
 
 /* GL wants RGBA byte order in memory. */
@@ -214,7 +311,9 @@ static uint32_t pack(uint32_t argb)
 static int degenerate(const float *a, const float *b, const float *c)
 {
     float area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
-    return area > -1e-6f && area < 1e-6f;
+    float pixels = (float)sPanelW * (float)sPanelH / (sLogW * sLogH);
+    area *= pixels;
+    return !(area < -0.25f || area > 0.25f); /* also reject NaNs; same 1/8-pixel guard as MK64 */
 }
 
 static void emit(const float *p, float u, float v, uint32_t c)

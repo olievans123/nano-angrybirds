@@ -14,6 +14,9 @@
 extern "C" void ab_open_libs(lua_State *L);
 
 Game G;
+#ifdef AB_NANO
+uint32_t game_stat_physics_us;
+#endif
 
 /* ------------------------------------------------------------------------------------ */
 /* Lua helpers                                                                          */
@@ -990,8 +993,11 @@ static int l_loadLevel(lua_State *L)
     snprintf(file, sizeof file, "%s.lua", arg_s(L, 1));
     G.acc = 0.0f;
     G.loading = true;
+    port_checkpoint("level-begin", file, 0);
     load_lua_file("blocks.lua", "blockTable");
+    port_checkpoint("level-blocks", file, 0);
     load_lua_file("particles.lua", "particleTable");
+    port_checkpoint("level-particles", file, 0);
     ObjIter it;
     for (ObjNode *n = obj_first(&it); n; n = obj_next(&it))
         G.world->DestroyBody(n->d.body);
@@ -1001,6 +1007,7 @@ static int l_loadLevel(lua_State *L)
     render_level_reset();
     load_lua_file(file, "loadedObjects");
     G.loading = false;
+    port_checkpoint("level-ready", file, 0);
     return 0;
 }
 
@@ -1055,6 +1062,9 @@ static void game_update(float dt)
     env_set_number("screenHeight", gScreenH);
 
     if (G.physicsEnabled) {
+#ifdef AB_NANO
+        uint64_t physics_start = plat_time_us();
+#endif
         G.acc += dt;
         bool resetForces = false;
         for (;;) {
@@ -1087,8 +1097,11 @@ static void game_update(float dt)
             else if (cur.angle > prev.angle) o->renderAngle = (1.0f - a) * (prev.angle + 2.0f * PI_F) + a * cur.angle;
             else o->renderAngle = (1.0f - a) * (prev.angle - 2.0f * PI_F) + a * cur.angle;
         }
+#ifdef AB_NANO
+        /* Includes native snapshots and interpolation; excludes Lua. */
+        game_stat_physics_us = (uint32_t)(plat_time_us() - physics_start);
+#endif
     }
-
     bool moving = false, awakeAny = false, zeroTol = false;
     float volWood = 0.0f, volRock = 0.0f, volLight = 0.0f;
     for (ObjNode *n = obj_first(&it); n; n = obj_next(&it)) {
@@ -1306,6 +1319,9 @@ int game_init(float logical_w, float logical_h)
 
 void game_frame(float dt, const PlatTouches *touches)
 {
+#ifdef AB_NANO
+    game_stat_physics_us = 0;
+#endif
     if (G.failed) return;
     assets_begin_frame();
     res_audio_tick(dt);

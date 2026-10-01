@@ -14,6 +14,7 @@ AR       := arm-none-eabi-ar
 
 ARCH     := -marm -mcpu=cortex-a5 -mfloat-abi=softfp -mfpu=vfpv3-d16 -mword-relocations
 COMMON   := $(ARCH) -O2 -ffunction-sections -fdata-sections -fno-common -fno-strict-aliasing \
+            -fno-builtin -MMD -MP \
             -DNDEBUG -DAB_NANO \
             -I$(NANOAPPS)/sdk -I$(ROOT)/src -I$(ROOT)/lua -I$(ROOT)
 CFLAGS   := $(COMMON) -std=gnu99 -Wall
@@ -24,7 +25,7 @@ LUA_SRCS := lapi lcode ldebug ldo ldump lfunc lgc llex lmem lobject lopcodes lpa
             ltable ltm lundump lvm lzio lauxlib lbaselib ltablib lstrlib
 ENGINE_C := gfx assets render resources lua_libs numfmt
 ENGINE_CXX := game game_render particles
-NANO_C   := nano_platform nano_libc nano_math
+NANO_C   := nano_platform nano_libc nano_math nano_perf
 B2_SRCS  := $(shell cd $(ROOT) && find Box2D -name '*.cpp')
 
 OBJS := $(LUA_SRCS:%=$(BUILD)/lua/%.o) $(ENGINE_C:%=$(BUILD)/src/%.o) $(ENGINE_CXX:%=$(BUILD)/src/%.o) \
@@ -70,3 +71,5 @@ clean:
 	rm -rf $(BUILD)
 
 .PHONY: all clean
+
+-include $(OBJS:.o=.d)

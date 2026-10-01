@@ -11,6 +11,8 @@
 extern "C" {
 #endif
 
+void gfx_set_texture_budget(uint32_t bytes);
+
 enum { GFX_FMT_RGB565 = 0, GFX_FMT_RGBA4444 = 1, GFX_FMT_RGBA8888 = 2 };
 enum { GFX_BLEND_ALPHA = 0, GFX_BLEND_ADD = 1, GFX_BLEND_NONE = 2 };
 
@@ -41,6 +43,7 @@ void gfx_flush(void);
 /* Statistics for the last finished frame. */
 extern int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 extern uint32_t gfx_stat_tex_bytes;
+extern uint32_t gfx_stat_upload_us;
 
 #ifdef __cplusplus
 }

@@ -3,7 +3,7 @@
 BUILD   := build/host
 CC      := cc
 CXX     := c++
-CFLAGS  := -O2 -g -Wall -Wno-deprecated-declarations -Ihost -Isrc -Ilua -I.
+CFLAGS  := -O2 -g -Wall -Wno-deprecated-declarations -MMD -MP -Ihost -Isrc -Ilua -I.
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti -Wno-unused-private-field -Wno-unused-value
 
 LUA_SRCS := lapi lcode ldebug ldo ldump lfunc lgc llex lmem lobject lopcodes lparser lstate lstring \
@@ -39,3 +39,5 @@ clean:
 	rm -rf $(BUILD) build/abhost
 
 .PHONY: all clean
+
+-include $(OBJS:.o=.d)

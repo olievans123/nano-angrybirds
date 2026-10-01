@@ -13,6 +13,8 @@
 extern "C" {
 #endif
 
+int assets_make_room(uint32_t bytes);
+
 typedef struct AbSheet AbSheet;
 
 typedef struct AbSprite {

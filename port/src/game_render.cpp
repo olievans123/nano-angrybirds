@@ -399,7 +399,8 @@ static void masks_build(void)
     free(mask.px);
     free(ground.px);
     if (atlas) {
-        sMaskTex = gfx_tex_create(MASK_ATLAS_W, MASK_ATLAS_H, GFX_FMT_RGBA4444, atlas, 1, 0);
+        if (assets_make_room(MASK_ATLAS_W * MASK_ATLAS_H * 2u))
+            sMaskTex = gfx_tex_create(MASK_ATLAS_W, MASK_ATLAS_H, GFX_FMT_RGBA4444, atlas, 1, 0);
         free(atlas);
     }
 }

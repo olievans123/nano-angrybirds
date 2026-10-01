@@ -18,6 +18,14 @@ int   plat_write_file(const char *path, const void *data, uint32_t size);   /* s
 
 void plat_log(const char *fmt, ...);
 
+/* Bounded, explicitly enabled device bring-up checkpoints; ordinary runs do no I/O. */
+#ifdef AB_NANO
+void port_checkpoint(const char *stage, const char *detail, uint32_t value);
+extern uint32_t game_stat_physics_us;
+#else
+#define port_checkpoint(stage, detail, value) ((void)0)
+#endif
+
 /* Audio. `file` is relative to the data directory ("SFX/x.wav", "Music/x.mp3").
  * plat_audio_play returns the clip's length in seconds (0 if nothing is played), which is
  * what res.isAudioPlaying reports on. plat_audio_stop(NULL) stops everything. */

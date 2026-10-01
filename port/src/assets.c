@@ -30,7 +30,7 @@ struct AbSheet {
 static AbSheet sSheets[MAX_SHEETS];
 static const AbSprite *sHash[HASH_SIZE];
 static uint32_t sFrame = 1;
-static uint32_t sBudget = 6u << 20;
+static uint32_t sBudget = 3u << 20;   /* leave space for driver allocations */
 
 static uint32_t hash_name(const char *s)
 {
@@ -188,7 +188,7 @@ const AbSprite *assets_find_sprite(const AbSheet *sheet, const char *sprite)
 }
 
 /* Drop least-recently-used pages (never one used this frame) until `need` more bytes fit. */
-static void make_room(uint32_t need)
+int assets_make_room(uint32_t need)
 {
     while (gfx_stat_tex_bytes + need > sBudget) {
         Page *victim = NULL;
@@ -204,10 +204,11 @@ static void make_room(uint32_t need)
             }
         }
         if (!victim)
-            return;             /* everything loaded is in use this frame */
+            return 0;           /* everything loaded is in use this frame */
         gfx_tex_destroy(victim->tex);
         victim->tex = 0;
     }
+    return 1;
 }
 
 int assets_sprite_texture(const AbSprite *sprite, int *tex_w, int *tex_h)
@@ -221,8 +222,12 @@ int assets_sprite_texture(const AbSprite *sprite, int *tex_w, int *tex_h)
         char path[64];
         uint32_t size = 0, want = (uint32_t)pg->w * pg->h * 2u;
         void *px;
-        make_room(want);
+        if (!assets_make_room(want)) {
+            plat_log("texture budget: cannot fit %s.p%d", sh->name, (int)sprite->page);
+            return 0;
+        }
         snprintf(path, sizeof path, "%s.p%d", sh->name, (int)sprite->page);
+        port_checkpoint("texture-read", path, want);
         px = plat_read_file(path, &size, 0);
         if (px && size >= want)
             pg->tex = gfx_tex_create(pg->w, pg->h, pg->fmt ? GFX_FMT_RGBA4444 : GFX_FMT_RGB565, px, 1, pg->repeat);
@@ -259,4 +264,7 @@ void assets_gl_lost(void)
         }
 }
 
-void assets_set_texture_budget(uint32_t bytes) { sBudget = bytes; }
+void assets_set_texture_budget(uint32_t bytes) {
+    sBudget = bytes;
+    gfx_set_texture_budget(bytes);
+}

@@ -16,22 +16,43 @@
 #include "../src/platform.h"
 #include "../src/gfx.h"
 #include "../src/assets.h"
+#include "nano_perf.h"
 
 #define AB_DIR   "/Apps/Data/AngryBirds"
 #define LOG_PATH AB_DIR "/log.txt"
 
 /* The 320-pixel-high game is drawn on the 240-pixel-high landscape panel: 0.75 panel
- * pixels per game pixel (the textures are pre-scaled by the same factor), so the visible
+ * pixels per game pixel (textures may use a lower resolution), so the visible
  * game screen is 576 x 320. */
 #define GAME_SCALE 0.75f
 
 /* Textures live in the OS heap (the GL driver's), which must never run out: the driver
  * reboots the iPod instead of failing. */
-#define TEXTURE_BUDGET (4u << 20)
+#define TEXTURE_BUDGET (3u << 20)
 
 extern void port_log_flush(const char *path);
 extern void port_crumb(const char *tag, uint32_t a, uint32_t b);
 extern void *memalign(size_t align, size_t size);
+extern uint32_t port_arena_largest_free(void);
+extern uint32_t port_arena_size(void);
+
+static unsigned sCheckpoints, sLevelTraceFrames;
+static uint32_t sIoUs;
+
+void port_checkpoint(const char *stage, const char *detail, uint32_t value) {
+    if (!strcmp(stage, "level-ready")) port_perf_level_loaded();
+    if (!sCheckpoints) return;
+    printf("CHECK %s %s value=%u heap=%u largest=%u arena=%u texture=%u\n",
+           stage, detail, (unsigned)value, (unsigned)hb_os_heap_free(),
+           (unsigned)hb_os_heap_largest(), (unsigned)port_arena_largest_free(),
+           (unsigned)gfx_stat_tex_bytes);
+    if (!strcmp(stage, "level-ready")) sLevelTraceFrames = 2;
+    /* The next upload/draw checkpoint saves these too. Avoid three synced
+     * writes per page in frames that load several images at once. */
+    if (!strcmp(stage, "texture-read") || !strcmp(stage, "texture-ready")) return;
+    sCheckpoints--;
+    port_log_flush(LOG_PATH);  /* aligned buffer; SDK syncs and closes before returning */
+}
 
 /* ---- time: hb_time_uptime_us wraps every ~71 minutes; extend to 64 bits ---- */
 uint64_t plat_time_us(void) {
@@ -48,7 +69,7 @@ uint64_t plat_time_us(void) {
  * take more than the file holds (the pattern proven on hardware by the MK64 port), and the
  * OS size query is avoided: data file sizes come from files.lst, written by the converter. */
 #define MAX_FILES 200
-typedef struct { char name[28]; uint32_t size; } FileEnt;
+typedef struct { char name[48]; uint32_t size; } FileEnt;
 static FileEnt *sFiles;
 static int sFileCount;
 
@@ -56,7 +77,9 @@ static void *read_capped(const char *full, uint32_t expect, uint32_t *got) {
     uint32_t cap = ((expect + 1u + 4095u) & ~4095u) + 4096u;
     uint8_t *b = memalign(64, cap);
     if (!b) return NULL;
+    uint64_t start = plat_time_us();
     uint32_t n = hb_fs_read(full, b, cap);          /* always more than the file holds */
+    sIoUs += (uint32_t)(plat_time_us() - start);
     if (!n) { free(b); return NULL; }
     if (n > expect) n = expect;
     b[n] = 0;
@@ -108,10 +131,18 @@ int plat_write_file(const char *path, const void *data, uint32_t size) {
     char full[96];
     if (*path == '/') path++;
     if (!size) return 0;
+    if (size > UINT32_MAX - 4095u) return -1;
+    void *aligned = memalign(64, (size + 4095u) & ~4095u);
+    if (!aligned) return -1;
+    memcpy(aligned, data, size);
     snprintf(full, sizeof full, AB_DIR "/%s", path);
     hb_fs_mkdir("/Apps/Data");
     hb_fs_mkdir(AB_DIR);
-    return hb_fs_write(full, data, size) ? 0 : -1;
+    uint64_t start = plat_time_us();
+    int result = hb_fs_write(full, aligned, size) ? 0 : -1;
+    sIoUs += (uint32_t)(plat_time_us() - start);
+    free(aligned);
+    return result;
 }
 
 void plat_log(const char *fmt, ...) {
@@ -221,7 +252,12 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
             int rc;
             printf("Angry Birds start: panel %dx%d, heap free %u, largest %u\n", w, h,
                    (unsigned)hb_os_heap_free(), (unsigned)hb_os_heap_largest());
+            printf("memory: arena %u, texture cache %u\n", (unsigned)port_arena_size(), TEXTURE_BUDGET);
             load_manifest();
+            /* Opt-in trace for one launch, capped at 96 events. Consume the flag
+             * before starting so subsequent normal play never writes these checkpoints. */
+            if (hb_fs_exists(AB_DIR "/trace.once") && hb_fs_remove(AB_DIR "/trace.once"))
+                sCheckpoints = 96;
             assets_set_texture_budget(TEXTURE_BUDGET);
             rc = game_init(sLogW, sLogH);
             printf("game_init: %d, %u ms, Lua heap %d KB, heap free %u\n", rc,
@@ -235,23 +271,36 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
     }
     {
         PlatTouches t;
-        uint64_t now = plat_time_us(), t0;
+        uint64_t now = plat_time_us(), t0, game_start, game_end, finish;
+        uint32_t interval = last ? (uint32_t)(now - last) : 0;
         float dt = last ? (float)(now - last) * 1e-6f : 1.f / 60.f;
         uint32_t bg = game_bg_color(), us;
         last = now;
         if (dt > 0.1f) dt = 0.1f;            /* as the original's main loop does */
         keep_awake();
         read_touches(&t);
+        sIoUs = 0;
         t0 = plat_time_us();
         gfx_begin_frame(w, h, sLogW, sLogH, 1, ((bg >> 16) & 255) / 255.f, ((bg >> 8) & 255) / 255.f, (bg & 255) / 255.f);
+        game_start = plat_time_us();
         game_frame(dt, &t);
+        game_end = plat_time_us();
+        if (sLevelTraceFrames) port_checkpoint("level-updated", "", n);
+        port_perf_draw(sLogW, sLogH);
         gfx_end_frame();
+        finish = plat_time_us();
+        port_perf_frame(interval, (uint32_t)(finish - now),
+                        (uint32_t)(game_end - game_start), (uint32_t)(finish - game_end),
+                        game_stat_physics_us, sIoUs, gfx_stat_upload_us);
+        if (sLevelTraceFrames) {
+            port_checkpoint("level-drawn", "", n);
+            sLevelTraceFrames--;
+        }
         us = (uint32_t)(plat_time_us() - t0);
         if (n < 4 || (n % 300) == 0) {
             printf("frame %u: %u us, %d draws, %d quads, %d tex %u KB, Lua %d KB, heap free %u\n", (unsigned)n,
                    (unsigned)us, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures,
                    (unsigned)(gfx_stat_tex_bytes / 1024u), game_lua_kb(), (unsigned)hb_os_heap_free());
-            if ((n % 1800) == 0) port_log_flush(LOG_PATH);
         }
         n++;
     }
