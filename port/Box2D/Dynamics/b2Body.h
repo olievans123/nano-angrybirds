@@ -57,7 +57,7 @@ struct b2BodyDef
 		angularVelocity = 0.0f;
 		linearDamping = 0.0f;
 		angularDamping = 0.0f;
-		allowSleep = true;
+		autoSleep = true;
 		awake = true;
 		fixedRotation = false;
 		bullet = false;
@@ -66,9 +66,8 @@ struct b2BodyDef
 		inertiaScale = 1.0f;
 	}
 
-	/// The body type: static, kinematic, or dynamic.
-	/// Note: if a dynamic body would have zero mass, the mass is set to one.
-	b2BodyType type;
+	/// Use this to store application specific body data.
+	void* userData;
 
 	/// The world position of the body. Avoid creating bodies at the origin
 	/// since this can lead to many overlapping shapes.
@@ -77,7 +76,7 @@ struct b2BodyDef
 	/// The world angle of the body in radians.
 	float32 angle;
 
-	/// The linear velocity of the body's origin in world co-ordinates.
+	/// The linear velocity of the body in world co-ordinates.
 	b2Vec2 linearVelocity;
 
 	/// The angular velocity of the body.
@@ -95,7 +94,7 @@ struct b2BodyDef
 
 	/// Set this flag to false if this body should never fall asleep. Note that
 	/// this increases CPU usage.
-	bool allowSleep;
+	bool autoSleep;
 
 	/// Is this body initially awake or sleeping?
 	bool awake;
@@ -112,8 +111,9 @@ struct b2BodyDef
 	/// Does this body start out active?
 	bool active;
 
-	/// Use this to store application specific body data.
-	void* userData;
+	/// The body type: static, kinematic, or dynamic.
+	/// Note: if a dynamic body would have zero mass, the mass is set to one.
+	b2BodyType type;
 
 	/// Experimental: scales the inertia tensor.
 	float32 inertiaScale;
@@ -123,6 +123,12 @@ struct b2BodyDef
 class b2Body
 {
 public:
+	/// Set the type of this body. This may alter the mass and velocity.
+	void SetType(b2BodyType type);
+
+	/// Get the type of this body.
+	b2BodyType GetType() const;
+
 	/// Creates a fixture and attach it to this body. Use this function if you need
 	/// to set some fixture parameters, like friction. Otherwise you can create the
 	/// fixture directly from a shape.
@@ -277,12 +283,6 @@ public:
 
 	/// Set the angular damping of the body.
 	void SetAngularDamping(float32 angularDamping);
-
-	/// Set the type of this body. This may alter the mass and velocity.
-	void SetType(b2BodyType type);
-
-	/// Get the type of this body.
-	b2BodyType GetType() const;
 
 	/// Should this body be treated like a bullet for continuous collision detection?
 	void SetBullet(bool flag);

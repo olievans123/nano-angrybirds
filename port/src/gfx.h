@@ -32,7 +32,8 @@ void gfx_set_blend(int mode);
 
 /* A quad: four corners in order top-left, top-right, bottom-right, bottom-left, with
  * texture coordinates in texels of `tex` (tex_w/tex_h are the texture's size). tex 0
- * draws a solid colour. rgba is 0xAARRGGBB. */
+ * draws a solid colour. argb is 0xAARRGGBB with premultiplied alpha (blending is
+ * GL_ONE, GL_ONE_MINUS_SRC_ALPHA, as in the original). */
 void gfx_quad(int tex, int tex_w, int tex_h, const float xy[8], const float uv[8], uint32_t argb);
 void gfx_tri(const float xy[6], uint32_t argb);
 void gfx_flush(void);

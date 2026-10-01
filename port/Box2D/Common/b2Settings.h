@@ -61,7 +61,7 @@ typedef float float32;
 
 /// A small length used as a collision and constraint tolerance. Usually it is
 /// chosen to be numerically significant, but visually insignificant.
-#define b2_linearSlop			0.005f
+#define b2_linearSlop			0.05f	/* Angry Birds 1.0: Rovio changed this from 0.005 (read from the binary) */
 
 /// A small angle used as a collision and constraint tolerance. Usually it is
 /// chosen to be numerically significant, but visually insignificant.
@@ -111,10 +111,10 @@ typedef float float32;
 // Sleep
 
 /// The time that a body must be still before it will go to sleep.
-#define b2_timeToSleep				0.5f
+#define b2_timeToSleep				0.25f	/* Angry Birds 1.0: 0.5 in stock Box2D */
 
 /// A body cannot sleep if its linear velocity is above this tolerance.
-#define b2_linearSleepTolerance		0.01f
+#define b2_linearSleepTolerance		0.1f	/* Angry Birds 1.0: 0.01 in stock Box2D */
 
 /// A body cannot sleep if its angular velocity is above this tolerance.
 #define b2_angularSleepTolerance	(2.0f / 180.0f * b2_pi)

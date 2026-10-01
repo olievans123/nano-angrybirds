@@ -85,8 +85,9 @@ for l in open(D2):
         elif t in stubs: note = '   ; stub ' + stubs[t]
     if ins.startswith('<unknown>'):
         w = word(a)
-        if w is not None and (w & 0x0ffffff0) == 0x012fff10: ins = 'bx r%d' % (w & 15)
-        elif w is not None and (w & 0x0ffffff0) == 0x012fff30: ins = 'blx r%d' % (w & 15)
+        CC = ['eq', 'ne', 'hs', 'lo', 'mi', 'pl', 'vs', 'vc', 'hi', 'ls', 'ge', 'lt', 'gt', 'le', '', 'nv']
+        if w is not None and (w & 0x0ffffff0) == 0x012fff10: ins = 'bx%s r%d' % (CC[w >> 28], w & 15)
+        elif w is not None and (w & 0x0ffffff0) == 0x012fff30: ins = 'blx%s r%d' % (CC[w >> 28], w & 15)
         elif w == 0xe1a0e00f: ins = 'mov lr, pc'
         else: ins = '.word 0x%08x' % (w or 0)
     print('%8x: %s%s' % (a, ins.replace('\t', ' '), note))

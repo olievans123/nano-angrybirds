@@ -153,81 +153,60 @@ void b2Contact::Update(b2ContactListener* listener)
 	// Re-enable this contact.
 	m_flags |= e_enabledFlag;
 
-	bool touching = false;
-	bool wasTouching = (m_flags & e_touchingFlag) == e_touchingFlag;
+	if (b2TestOverlap(m_fixtureA->m_aabb, m_fixtureB->m_aabb))
+	{
+		Evaluate();
+	}
+	else
+	{
+		m_manifold.m_pointCount = 0;
+	}
 
 	b2Body* bodyA = m_fixtureA->GetBody();
 	b2Body* bodyB = m_fixtureB->GetBody();
 
-	bool aabbOverlap = b2TestOverlap(m_fixtureA->m_aabb, m_fixtureB->m_aabb);
+	int32 oldCount = oldManifold.m_pointCount;
+	int32 newCount = m_manifold.m_pointCount;
 
-	// Is this contact a sensor?
-	if (m_flags & e_sensorFlag)
+	if (newCount == 0 && oldCount > 0)
 	{
-		if (aabbOverlap)
-		{
-			const b2Shape* shapeA = m_fixtureA->GetShape();
-			const b2Shape* shapeB = m_fixtureB->GetShape();
-			const b2Transform& xfA = bodyA->GetTransform();
-			const b2Transform& xfB = bodyB->GetTransform();
-			touching = b2TestOverlap(shapeA, shapeB, xfA, xfB);
-		}
+		bodyA->SetAwake(true);
+		bodyB->SetAwake(true);
+	}
 
-		// Sensors don't generate manifolds.
-		m_manifold.m_pointCount = 0;
+	// Slow contacts don't generate TOI events.
+	if (bodyA->GetType() != b2_dynamicBody || bodyA->IsBullet() || bodyB->GetType() != b2_dynamicBody || bodyB->IsBullet())
+	{
+		m_flags |= e_continuousFlag;
 	}
 	else
 	{
-		// Slow contacts don't generate TOI events.
-		if (bodyA->GetType() != b2_dynamicBody || bodyA->IsBullet() || bodyB->GetType() != b2_dynamicBody || bodyB->IsBullet())
-		{
-			m_flags |= e_continuousFlag;
-		}
-		else
-		{
-			m_flags &= ~e_continuousFlag;
-		}
+		m_flags &= ~e_continuousFlag;
+	}
 
-		if (aabbOverlap)
-		{
-			Evaluate();
-			touching = m_manifold.m_pointCount > 0;
+	// Match old contact ids to new contact ids and copy the
+	// stored impulses to warm start the solver.
+	for (int32 i = 0; i < m_manifold.m_pointCount; ++i)
+	{
+		b2ManifoldPoint* mp2 = m_manifold.m_points + i;
+		mp2->m_normalImpulse = 0.0f;
+		mp2->m_tangentImpulse = 0.0f;
+		b2ContactID id2 = mp2->m_id;
 
-			// Match old contact ids to new contact ids and copy the
-			// stored impulses to warm start the solver.
-			for (int32 i = 0; i < m_manifold.m_pointCount; ++i)
+		for (int32 j = 0; j < oldManifold.m_pointCount; ++j)
+		{
+			b2ManifoldPoint* mp1 = oldManifold.m_points + j;
+
+			if (mp1->m_id.key == id2.key)
 			{
-				b2ManifoldPoint* mp2 = m_manifold.m_points + i;
-				mp2->m_normalImpulse = 0.0f;
-				mp2->m_tangentImpulse = 0.0f;
-				b2ContactID id2 = mp2->m_id;
-
-				for (int32 j = 0; j < oldManifold.m_pointCount; ++j)
-				{
-					b2ManifoldPoint* mp1 = oldManifold.m_points + j;
-
-					if (mp1->m_id.key == id2.key)
-					{
-						mp2->m_normalImpulse = mp1->m_normalImpulse;
-						mp2->m_tangentImpulse = mp1->m_tangentImpulse;
-						break;
-					}
-				}
+				mp2->m_normalImpulse = mp1->m_normalImpulse;
+				mp2->m_tangentImpulse = mp1->m_tangentImpulse;
+				break;
 			}
-		}
-		else
-		{
-			m_manifold.m_pointCount = 0;
-		}
-
-		if (touching != wasTouching)
-		{
-			bodyA->SetAwake(true);
-			bodyB->SetAwake(true);
 		}
 	}
 
-	if (touching)
+	if (newCount > 0)
 	{
 		m_flags |= e_touchingFlag;
 	}
@@ -236,12 +215,12 @@ void b2Contact::Update(b2ContactListener* listener)
 		m_flags &= ~e_touchingFlag;
 	}
 
-	if (wasTouching == false && touching == true)
+	if (oldCount == 0 && newCount > 0)
 	{
 		listener->BeginContact(this);
 	}
 
-	if (wasTouching == true && touching == false)
+	if (oldCount > 0 && newCount == 0)
 	{
 		listener->EndContact(this);
 	}

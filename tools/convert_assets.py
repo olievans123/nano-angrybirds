@@ -80,17 +80,34 @@ def read_sheet(path):
     return image, sprites
 
 
+def read_font(path):
+    """Bitmap font .dat: image name, leading, tracking, then glyphs (code, rect, baseline).
+    Glyphs become sprites named by their decimal character code, pivot (0, baseline)."""
+    d = open(path, 'rb').read()
+    n = struct.unpack_from('>H', d, 0)[0]
+    image = d[2:2 + n].decode('latin1')
+    pos = 2 + n
+    leading, tracking, count = struct.unpack_from('>hhh', d, pos)
+    pos += 6
+    sprites = []
+    for _ in range(count):
+        code, x, y, w, h, base = struct.unpack_from('>Hhhhhh', d, pos)
+        pos += 12
+        sprites.append(dict(name='%u' % code, x=x, y=y, w=w, h=h, px=0, py=base))
+    assert pos == len(d), path
+    return image, sprites, leading, tracking
+
+
 def scale_rgba(im, w, h):
-    """Resize with premultiplied alpha (no dark fringes around sprites)."""
+    """Resize. The game's images are stored with premultiplied alpha (it blends with
+    GL_ONE, GL_ONE_MINUS_SRC_ALPHA), so the channels can be filtered as they are."""
     if im.size == (w, h):
         return im
     a = np.asarray(im, np.float32) / 255.0
-    a[..., :3] *= a[..., 3:4]
     chans = [Image.fromarray(a[..., i]).resize((w, h), Image.LANCZOS) for i in range(4)]
-    out = np.stack([np.asarray(c) for c in chans], axis=-1)
-    alpha = np.clip(out[..., 3:4], 1e-6, 1.0)
-    out[..., :3] = np.where(out[..., 3:4] > 1e-4, out[..., :3] / alpha, 0)
-    return Image.fromarray((np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8), 'RGBA')
+    out = np.clip(np.stack([np.asarray(c) for c in chans], axis=-1), 0, 1)
+    out[..., :3] = np.minimum(out[..., :3], out[..., 3:4])     # stay premultiplied after ringing
+    return Image.fromarray((out * 255 + 0.5).astype(np.uint8), 'RGBA')
 
 
 BAYER = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], np.float32) / 16.0 - 0.5
@@ -112,7 +129,8 @@ def quantize(rgba, fmt):
     # keep fully transparent / fully opaque texels exact
     a = q(3, 4)
     a = np.where(rgba[..., 3] == 0, 0, np.where(rgba[..., 3] == 255, 15, a)).astype(np.uint16)
-    return (q(0, 4) << 12) | (q(1, 4) << 8) | (q(2, 4) << 4) | a
+    r, g, b = (np.minimum(q(c, 4), a) for c in range(3))       # premultiplied: colour <= alpha
+    return (r << 12) | (g << 8) | (b << 4) | a
 
 
 def pot(n):
@@ -135,8 +153,9 @@ def pack(rects, max_size):
         if any(w > mw or h > mh for w, h in rects):
             continue
         placed, sizes = pack_shelves(rects, mw, mh)
-        cost = sum(w * h for w, h in sizes)
-        if best is None or cost < best[0] or (cost == best[0] and len(sizes) < len(best[2])):
+        # texture memory, plus a charge per page (each page is a file read and a draw-batch break)
+        cost = sum(w * h for w, h in sizes) + 65536 * len(sizes)
+        if best is None or cost < best[0]:
             best = (cost, placed, sizes)
     assert best, 'sprite larger than a page'
     return best[1], best[2]
@@ -179,8 +198,12 @@ def pack_shelves(rects, max_w, max_h):
     return out, sizes
 
 
-def convert_sheet(src_dir, dat, out_dir, scale, max_page, repeat_sprites, stats):
-    image_name, sprites = read_sheet(os.path.join(src_dir, dat))
+def convert_sheet(src_dir, dat, out_dir, scale, max_page, repeat_sprites, stats, font=False):
+    if font:
+        image_name, sprites, leading, tracking = read_font(os.path.join(src_dir, dat))
+        open(os.path.join(out_dir, dat[:-4] + '.fnt'), 'wb').write(struct.pack('<hh', leading, tracking))
+    else:
+        image_name, sprites = read_sheet(os.path.join(src_dir, dat))
     path = os.path.join(src_dir, image_name)
     im = load_pvr(path) if image_name.lower().endswith('.pvr') else Image.open(path).convert('RGBA')
     base = dat[:-4]
@@ -276,8 +299,13 @@ def main():
             head = open(p, 'rb').read(64)
             n = struct.unpack_from('>H', head, 0)[0]
             img = head[2:2 + n]
-            if name.startswith('FONT_') or name.startswith('TEXTS_'):
-                continue                      # handled below
+            if name.startswith('TEXTS_'):
+                shutil.copy(p, os.path.join(args.out, name))
+                continue
+            if name.startswith('FONT_'):
+                base, count, pages = convert_sheet(args.src, name, args.out, args.scale, args.max_page, repeat, stats, font=True)
+                print('%-16s %3d glyphs  -> %s' % (base, count, ' '.join('%dx%d' % p for p in pages)))
+                continue
             if img.endswith((b'.pvr', b'.png')):
                 base, count, pages = convert_sheet(args.src, name, args.out, args.scale, args.max_page, repeat, stats)
                 print('%-16s %3d sprites -> %s' % (base, count, ' '.join('%dx%d' % p for p in pages)))

@@ -517,11 +517,12 @@
 @@ LUAI_MAXNUMBER2STR is maximum size of previous conversion.
 @@ lua_str2number converts a string to a number.
 */
+#include "../src/numfmt.h"
 #define LUA_NUMBER_SCAN		"%f"
 #define LUA_NUMBER_FMT		"%.7g"
-#define lua_number2str(s,n)	sprintf((s), LUA_NUMBER_FMT, (double)(n))
+#define lua_number2str(s,n)	ab_fmt_float((s), (n))
 #define LUAI_MAXNUMBER2STR	32 /* 16 digits, sign, point, and \0 */
-#define lua_str2number(s,p)	((float)strtod((s), (p)))
+#define lua_str2number(s,p)	ab_strtof((s), (p))
 
 
 /*

@@ -154,8 +154,6 @@ void b2Joint::Destroy(b2Joint* joint, b2BlockAllocator* allocator)
 
 b2Joint::b2Joint(const b2JointDef* def)
 {
-	b2Assert(def->bodyA != def->bodyB);
-
 	m_type = def->type;
 	m_prev = NULL;
 	m_next = NULL;

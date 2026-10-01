@@ -18,6 +18,14 @@ int   plat_write_file(const char *path, const void *data, uint32_t size);   /* s
 
 void plat_log(const char *fmt, ...);
 
+/* Audio. `file` is relative to the data directory ("SFX/x.wav", "Music/x.mp3").
+ * plat_audio_play returns the clip's length in seconds (0 if nothing is played), which is
+ * what res.isAudioPlaying reports on. plat_audio_stop(NULL) stops everything. */
+float plat_audio_play(const char *file, float volume, int loop, int track);
+void  plat_audio_stop(const char *file);
+void  plat_audio_track_volume(int track, float volume);
+void  plat_audio_clip_volume(const char *file, float volume);
+
 /* Fingers currently on the screen, in logical game pixels. */
 #define PLAT_MAX_TOUCHES 2
 typedef struct {

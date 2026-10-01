@@ -90,6 +90,15 @@ void plat_log(const char *fmt, ...)
     fputc('\n', stderr);
 }
 
+float plat_audio_play(const char *file, float volume, int loop, int track)
+{
+    (void)file; (void)volume; (void)loop; (void)track;
+    return 0.f;
+}
+void plat_audio_stop(const char *file) { (void)file; }
+void plat_audio_track_volume(int track, float volume) { (void)track; (void)volume; }
+void plat_audio_clip_volume(const char *file, float volume) { (void)file; (void)volume; }
+
 /* ---- PNG screenshot ---- */
 static void put32(unsigned char *p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
 

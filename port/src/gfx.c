@@ -146,7 +146,8 @@ void gfx_flush(void)
             glDisable(GL_BLEND);
         } else {
             glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, sBlend == GFX_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+            /* the game's images (and the colours passed in) are premultiplied */
+            glBlendFunc(GL_ONE, sBlend == GFX_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
         }
     }
     glVertexPointer(2, GL_FLOAT, sizeof(Vert), &sVerts[0].x);
