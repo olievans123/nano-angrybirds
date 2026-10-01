@@ -149,6 +149,9 @@ static void screenshot(const char *name)
 static PlatTouches sTouch;
 static uint32_t sFrame;
 
+static uint64_t sFrameUs;
+static int sLuaPeakKb, sPeakDraws, sPeakQuads;
+static uint32_t sPeakTex;
 static const char *sDumpNames;
 static int sDumpEvery = 1, sDumpFrom;
 
@@ -161,8 +164,16 @@ static void run_frame(float dt)
     uint32_t bg = game_bg_color();
     gfx_begin_frame(sPanelW, sPanelH, sLogW, sLogH, sRot,
                     ((bg >> 16) & 255) / 255.f, ((bg >> 8) & 255) / 255.f, (bg & 255) / 255.f);
-    game_frame(dt, &sTouch);
-    gfx_end_frame();
+    {
+        uint64_t t0 = plat_time_us();
+        game_frame(dt, &sTouch);
+        gfx_end_frame();
+        sFrameUs += plat_time_us() - t0;
+    }
+    if (game_lua_kb() > sLuaPeakKb) sLuaPeakKb = game_lua_kb();
+    if (gfx_stat_draws > sPeakDraws) sPeakDraws = gfx_stat_draws;
+    if (gfx_stat_quads > sPeakQuads) sPeakQuads = gfx_stat_quads;
+    if (gfx_stat_tex_bytes > sPeakTex) sPeakTex = gfx_stat_tex_bytes;
     sFrame++;
 }
 
@@ -303,6 +314,8 @@ static int headless(int frames, int shot_every)
     }
     fprintf(stderr, "ran %d frames; last frame: %d draws, %d quads, %d textures, %u KB of texture\n",
             i, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures, gfx_stat_tex_bytes / 1024u);
+    fprintf(stderr, "peaks: %d draws, %d quads, %u KB of texture, Lua heap %d KB (now %d KB); %.0f us/frame on this machine\n",
+            sPeakDraws, sPeakQuads, sPeakTex / 1024u, sLuaPeakKb, game_lua_kb(), (double)sFrameUs / (double)(i ? i : 1));
     return 0;
 }
 

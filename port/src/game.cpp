@@ -1314,6 +1314,9 @@ void game_frame(float dt, const PlatTouches *touches)
     lua_settop(G.L, 0);
 }
 
+/* Kilobytes of Lua heap in use. */
+int game_lua_kb(void) { return G.L ? lua_gc(G.L, LUA_GCCOUNT, 0) : 0; }
+
 /* Test hook: print script globals ("a,b.c,d") as one log line. */
 void game_debug_dump(const char *names)
 {
