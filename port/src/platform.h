@@ -49,6 +49,7 @@ uint32_t game_bg_color(void);                                      /* 0xRRGGBB t
 int  game_wants_exit(void);
 int  game_lua_kb(void);
 extern uint32_t game_stat_mask_builds;
+extern uint32_t game_stat_rotation_builds, game_stat_rotation_hits;
 void game_debug_dump(const char *names);                           /* test hook: log script globals */
 
 #ifdef __cplusplus

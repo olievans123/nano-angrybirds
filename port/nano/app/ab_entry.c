@@ -17,6 +17,7 @@
 #include "gl.h"
 
 extern void ab_nano_frame(int w, int h, uint32_t frame);
+extern uint32_t port_perf_entry_us;
 
 typedef void (*gl_frame_fn)(int w, int h, uint32_t frame);
 
@@ -134,6 +135,7 @@ static int restore_data_from_file(void)
 static void ab_frame(int w, int h, uint32_t frame)
 {
     static uint32_t s_logged;
+    uint32_t entry_start = hb_time_uptime_us();
     hb_fpu_status_t st;
     int r = hb_fpu_attach_current_task(&st);
     if (s_logged < 1 || r < 0) {
@@ -143,6 +145,7 @@ static void ab_frame(int w, int h, uint32_t frame)
     }
     if (r < 0)
         return;          /* no FP context: never run float code */
+    port_perf_entry_us = hb_time_uptime_us() - entry_start;
     ab_nano_frame(w, h, frame);
 }
 

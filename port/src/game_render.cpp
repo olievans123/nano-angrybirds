@@ -10,14 +10,36 @@
 
 static const float kWorld = 20.0f;      /* world pixels per physics unit (hard-coded in the original) */
 static const Anchor kPivot = { V_PIVOT, H_PIVOT };
+uint32_t game_stat_rotation_builds, game_stat_rotation_hits;
 
 static const char *arg_s(lua_State *L, int i) { const char *s = lua_tostring(L, i); return s ? s : ""; }
 static float arg_n(lua_State *L, int i) { return (float)lua_tonumber(L, i); }
 
 static void rs_rotation(float angle)
 {
-    float c = cosf(angle), s = sinf(angle);
-    gRS.m00 = c; gRS.m11 = c; gRS.m10 = s; gRS.m01 = -s;
+    /* Small exact-key cache shared by objects and script render states. Keeping
+     * it outside ObjData preserves the object pool's allocation sizes. Float
+     * bits distinguish +0 from -0 and never use a tolerance for moving objects. */
+    struct Rotation { uint32_t bits; float c, s; bool valid; };
+    static Rotation cache[32][2];
+    static uint8_t victim[32];
+    uint32_t bits;
+    __builtin_memcpy(&bits, &angle, sizeof bits);
+    unsigned slot = (bits ^ (bits >> 13) ^ (bits >> 23)) & 31u, way;
+    Rotation *pair = cache[slot], *r;
+    if (pair[0].valid && pair[0].bits == bits) way = 0;
+    else if (pair[1].valid && pair[1].bits == bits) way = 1;
+    else way = victim[slot];
+    r = &pair[way];
+    if (!r->valid || r->bits != bits) {
+        r->c = cosf(angle); r->s = sinf(angle);
+        r->bits = bits; r->valid = true;
+        game_stat_rotation_builds++;
+    } else {
+        game_stat_rotation_hits++;
+    }
+    victim[slot] = (uint8_t)(way ^ 1u);
+    gRS.m00 = r->c; gRS.m11 = r->c; gRS.m10 = r->s; gRS.m01 = -r->s;
 }
 
 static void rs_identity(void) { gRS.m00 = 1.f; gRS.m10 = 0.f; gRS.m01 = 0.f; gRS.m11 = 1.f; }

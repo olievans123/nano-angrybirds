@@ -14,6 +14,8 @@ averaging 2.49 ms versus 3.49 ms before; the playthroughs used different inputs.
 The next build adds faster bulk memory operations and more detailed cadence
 measurement. Its first 30-second sample averaged 48.9 FPS; 59.1% of measured
 callback intervals were at or below 16.667 ms. A steady 60 FPS remains unverified.
+The current build also caches render rotations and separates callback-entry
+overhead from gap timing; its device measurement is pending.
 The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
@@ -177,7 +179,7 @@ saves an initial report after five measured seconds, then replaces it once after
 30 measured seconds. Samples survive level changes; each new level adds its own
 two-second warmup. At most two writes occur per launch, at the start of the next
 callback before new GL work. The interval containing the recorder's own disk write
-is excluded from the measurements. The compact v5 report fits within 512 bytes and includes mean
+is excluded from the measurements. The compact v6 report fits within 512 bytes and includes mean
 FPS, frame-time percentiles, slow-frame counts, game/physics/draw/IO/upload timings.
 `fps10` is FPS multiplied by ten; times are microseconds except `p95_ms`, whose
 histogram is capped at 200 ms. Physics, IO and upload times are subsets of game
@@ -191,6 +193,10 @@ callback to the next frame's start (including unmeasured entry work), while `vbo
 times the vertex-buffer upload and is a subset of submission time. `min` is the
 shortest callback interval; `at60` counts intervals at or below 16,667 microseconds.
 Neither field establishes that every frame meets 60 FPS.
+V6 adds `entry` for the mean time spent in the app entry wrapper, principally
+FP-context attachment; this is already part of `gap` and must not be added to it.
+`gap50_ms` and `gap95_ms` describe the gap distribution, with the same one-ms
+buckets and 200 ms cap used for frame intervals.
 The HUD adds one small texture and two draw batches. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.
 
@@ -365,3 +371,34 @@ callback interval. The measured gap includes resident scheduling/presentation
 and unmeasured entry work, but does not identify their individual contributions.
 Uneven callback timing is the next area to investigate for the 60 FPS target;
 there is no evidence here of a fixed 49 FPS cap.
+
+## Rotation cache and callback-entry timing
+
+Render rotations now use a fixed 64-entry, two-way cache shared by objects and
+script render states. Keys preserve the exact float bits, including signed zero;
+there is no angle approximation. A cache miss evaluates the same sine/cosine
+functions as before. The table uses 1,056 bytes and leaves object sizes and heap
+allocation patterns unchanged. This reduces repeated trigonometry, which is only
+one component of total frame cost.
+
+| Replay | Rotation requests | Recalculations | Reused |
+| --- | ---: | ---: | ---: |
+| Mac level 1-1 | 40,107 | 2,711 | 37,396 (93.2%) |
+| Mac level 1-2 with jitter | 121,394 | 10,483 | 110,911 (91.4%) |
+| ARM level 1-2 with jitter | 120,295 | 14,099 | 106,196 (88.3%) |
+
+All 496 sampled screenshots match the memory-optimized build. The final ARM
+replay completes 4,600 frames with score 17,880, five mask builds, and zero
+allocation failures. Draw counts and allocator totals remain identical to the
+previous build, including 505,422 allocation probes. The package passes its
+static-constructor, Thumb-FP and relocation checks. Including the additional
+profiler histogram, the update adds 828 bytes on disk and 1,896 bytes of static
+storage relative to the memory build.
+
+The v6 recorder measures the entry wrapper around the existing FP-context setup
+and adds median/95th-percentile callback-gap timing. It retains the same two
+bounded report writes and excludes their intervals. Unit tests cover varying
+entry costs, alternating gaps, 60 Hz cadence, warmup, transitions, and write-delay
+exclusion. There is no change to callback scheduling; the new measurements help
+identify which part of the previous 14.619 ms gap needs attention. Actual device
+FPS for this build is unmeasured; the latest verified sample remains 48.9 FPS.

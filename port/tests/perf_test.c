@@ -29,6 +29,7 @@ int main(int argc, char **argv) {
     int jitter = argc > 1 && !strcmp(argv[1], "jitter");
     int transitions = argc > 1 && !strcmp(argv[1], "transitions");
     gfx_stat_draws = 12; gfx_stat_merges = 7; gfx_stat_state_calls = 22;
+    port_perf_entry_us = 175;
     port_perf_level_loaded();
     if (argc > 1 && !strcmp(argv[1], "sixty")) {
         for (int i = 0; i < 120; i++)
@@ -45,6 +46,7 @@ int main(int argc, char **argv) {
         assert(writes == 2);
         assert(strstr(report, "frames=1800 elapsed=30000600 fps10=599"));
         assert(strstr(report, "gap=10667 vbo=250 min=16667 at60=1800"));
+        assert(strstr(report, "entry=175 gap50_ms=11 gap95_ms=11"));
         puts("60 Hz cadence profile: PASS");
         return 0;
     }
@@ -59,6 +61,7 @@ int main(int argc, char **argv) {
             port_perf_flush();
         }
         for (int i = 0; i < (transitions ? 60 : 600); i++, frame++) {
+            port_perf_entry_us = jitter ? (frame & 1 ? 300 : 50) : 175;
             uint32_t interval = jitter ? (frame & 1 ? 83333 : 16667) : 50000;
             int before = writes;
             port_perf_frame(interval, 6000, 3000, 2000, 1000, 0, 0, interval - 6000);
@@ -86,6 +89,8 @@ int main(int argc, char **argv) {
     assert(strstr(report, "draw_avg=12 merge_avg=7 state_avg=22"));
     assert(strstr(report, jitter ? "gap=44000 vbo=250 min=16667 at60=300" :
                                   "gap=44000 vbo=250 min=50000 at60=0"));
+    assert(strstr(report, jitter ? "entry=175 gap50_ms=11 gap95_ms=78" :
+                                  "entry=175 gap50_ms=44 gap95_ms=44"));
     assert(strstr(report, jitter ? "p95_ms=84 worst=83333" : "p95_ms=50 worst=50000"));
     assert(strstr(report, jitter ? "slow33=300 slow50=300" : "slow33=600 slow50=0"));
     port_perf_level_loaded();

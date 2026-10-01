@@ -40,7 +40,7 @@ def main():
                     runs.append(shots)
                     if label == 'candidate':
                         for line in log.splitlines():
-                            if line.startswith('render work:'):
+                            if line.startswith(('render work:', 'rotation work:')):
                                 print(name + ': ' + line, flush=True)
                 names = sorted(p.name for p in runs[0].glob('*.png'))
                 assert names and names == sorted(p.name for p in runs[1].glob('*.png'))

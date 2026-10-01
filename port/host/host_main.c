@@ -157,6 +157,7 @@ static uint64_t sFrameUs;
 static int sLuaPeakKb, sPeakDraws, sPeakQuads;
 static uint32_t sPeakTex;
 static uint64_t sTotalDraws, sTotalMerges, sTotalStateCalls;
+static uint64_t sRotationBuilds, sRotationHits;
 static const char *sDumpNames;
 static int sDumpEvery = 1, sDumpFrom;
 
@@ -172,6 +173,8 @@ static void run_frame(float dt)
     {
         uint64_t t0 = plat_time_us();
         game_frame(dt, &sTouch);
+        sRotationBuilds += game_stat_rotation_builds;
+        sRotationHits += game_stat_rotation_hits;
         sMaskBuilds += game_stat_mask_builds;
         gfx_end_frame();
         sTotalDraws += gfx_stat_draws;
@@ -328,6 +331,8 @@ static int headless(int frames, int shot_every)
     fprintf(stderr, "resource work: %u file reads, %u ground atlas builds\n", sReads, sMaskBuilds);
     fprintf(stderr, "render work: %llu draws, %llu merges, %llu batch state calls\n",
             (unsigned long long)sTotalDraws, (unsigned long long)sTotalMerges, (unsigned long long)sTotalStateCalls);
+    fprintf(stderr, "rotation work: %llu recalculations, %llu reused\n",
+            (unsigned long long)sRotationBuilds, (unsigned long long)sRotationHits);
     return 0;
 }
 

@@ -16,7 +16,10 @@ typedef struct {
     uint64_t draws, merges, state_calls;
     uint64_t gap, buffer;
     uint32_t minimum, fast60;
+    uint64_t entry;
+    uint32_t gap_histogram[201];
 } Samples;
+uint32_t port_perf_entry_us;
 static Samples sTotal;
 static uint64_t sWindowUs, sWarmupUs;
 static uint32_t sWindowFrames, sFps10;
@@ -38,25 +41,31 @@ static unsigned average(uint64_t sum)
     return sTotal.frames ? (unsigned)(sum / sTotal.frames) : 0;
 }
 
-static void prepare_report(void)
+static unsigned percentile(const uint32_t *histogram, unsigned percent)
 {
-    unsigned target = (sTotal.frames * 95u + 99u) / 100u, seen = 0, p95 = 0;
-    for (; p95 < 200; p95++) {
-        seen += sTotal.histogram[p95];
+    unsigned target = (sTotal.frames * percent + 99u) / 100u, seen = 0, bucket = 0;
+    for (; bucket < 200; bucket++) {
+        seen += histogram[bucket];
         if (seen >= target) break;
     }
+    return bucket;
+}
+
+static void prepare_report(void)
+{
     int n = snprintf(sReport, sizeof(sReport),
-        "AB profile v5; us except p95_ms; warmup=2s/level\n"
+        "AB profile v6; us except *_ms; warmup=2s/level\n"
         "frames=%u elapsed=%u fps10=%u\n"
         "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
         "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
         "mask_builds=%u draws=%d quads=%d textures=%d tex_KiB=%u\n"
         "alloc_avg=%u probes_avg=%u copy_B_avg=%u alloc_failures=%u\n"
         "draw_avg=%u merge_avg=%u state_avg=%u\n"
-        "gap=%u vbo=%u min=%u at60=%u\n",
+        "gap=%u vbo=%u min=%u at60=%u\n"
+        "entry=%u gap50_ms=%u gap95_ms=%u\n",
         (unsigned)sTotal.frames, (unsigned)sTotal.interval,
         (unsigned)(10000000ull * sTotal.frames / sTotal.interval),
-        average(sTotal.interval), p95, (unsigned)sTotal.worst,
+        average(sTotal.interval), percentile(sTotal.histogram, 95), (unsigned)sTotal.worst,
         (unsigned)sTotal.slow33, (unsigned)sTotal.slow50,
         average(sTotal.cpu), average(sTotal.game), average(sTotal.submit),
         average(sTotal.physics), average(sTotal.io), average(sTotal.upload),
@@ -66,7 +75,9 @@ static void prepare_report(void)
         (unsigned)sTotal.alloc_failures, average(sTotal.draws),
         average(sTotal.merges), average(sTotal.state_calls),
         average(sTotal.gap), average(sTotal.buffer),
-        (unsigned)sTotal.minimum, (unsigned)sTotal.fast60);
+        (unsigned)sTotal.minimum, (unsigned)sTotal.fast60,
+        average(sTotal.entry), percentile(sTotal.gap_histogram, 50),
+        percentile(sTotal.gap_histogram, 95));
     if (n > 0 && (unsigned)n < sizeof(sReport))
         sReportBytes = n;
 }
@@ -111,6 +122,10 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     sTotal.merges += gfx_stat_merges;
     sTotal.state_calls += gfx_stat_state_calls;
     sTotal.gap += gap;
+    sTotal.entry += port_perf_entry_us;
+    uint32_t gap_bin = gap / 1000u + (gap % 1000u != 0);
+    if (gap_bin > 200) gap_bin = 200;
+    sTotal.gap_histogram[gap_bin]++;
     sTotal.buffer += gfx_stat_buffer_us;
     if (!sTotal.minimum || interval < sTotal.minimum) sTotal.minimum = interval;
     sTotal.fast60 += interval <= 16667u;

@@ -103,6 +103,7 @@ int main(void) {
     uint32_t masks = 0;
     uint64_t allocations = 0, probes = 0, copied = 0, failures = 0;
     uint64_t draws = 0, merges = 0, state_calls = 0;
+    uint64_t rotation_builds = 0, rotation_hits = 0;
     for (int frame = 0; frame < TEST_FRAMES; frame++) {
         uint32_t interval = TEST_JITTER ? (frame & 1 ? 43333 : 23333) : 33333;
         now += interval;
@@ -117,6 +118,8 @@ int main(void) {
         port_alloc_stats_reset();
         gfx_begin_frame(240, 432, 576, 320, 1, 0, 0, 0);
         game_frame(TEST_JITTER ? (frame & 1 ? 1.3f : 0.7f) / 30.f : 1.f/30.f, &touch);
+        rotation_builds += game_stat_rotation_builds;
+        rotation_hits += game_stat_rotation_hits;
         masks += game_stat_mask_builds;
         port_perf_draw(576, 320);
         gfx_end_frame();
@@ -134,6 +137,8 @@ int main(void) {
         }
     }
     printf("completed %d frames; %u mask builds\n", TEST_FRAMES, masks);
+    printf("rotation work: %llu recalculations, %llu reused\n",
+           (unsigned long long)rotation_builds, (unsigned long long)rotation_hits);
     printf("render work: %llu draws, %llu merges, %llu batch state calls\n",
            (unsigned long long)draws, (unsigned long long)merges, (unsigned long long)state_calls);
     printf("allocator totals: %llu allocations, %llu probes, %llu copied bytes, %llu failures\n",
