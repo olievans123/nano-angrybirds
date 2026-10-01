@@ -121,7 +121,6 @@ int main(void) {
         rotation_builds += game_stat_rotation_builds;
         rotation_hits += game_stat_rotation_hits;
         masks += game_stat_mask_builds;
-        port_perf_draw(576, 320);
         gfx_end_frame();
         draws += gfx_stat_draws; merges += gfx_stat_merges; state_calls += gfx_stat_state_calls;
         PortAllocStats ast = port_alloc_stats();

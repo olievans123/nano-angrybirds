@@ -1,4 +1,4 @@
-/* The counter must measure callback cadence, not the much shorter CPU work. */
+/* The recorder must measure callback cadence, not the much shorter CPU work. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,10 +20,6 @@ int plat_write_file(const char *path, const void *data, uint32_t size) {
     memcpy(report, data, size); report[size] = 0; writes++;
     return 0;
 }
-int gfx_tex_create(int w, int h, int fmt, const void *p, int linear, int repeat) { return 1; }
-void gfx_set_clip(float x, float y, float w, float h) {}
-void gfx_set_blend(int mode) {}
-void gfx_quad(int tex, int w, int h, const float xy[8], const float uv[8], uint32_t c) {}
 
 int main(int argc, char **argv) {
     int jitter = argc > 1 && !strcmp(argv[1], "jitter");

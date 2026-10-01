@@ -37,6 +37,7 @@ def main():
     ap.add_argument('--sdk', type=Path, required=True, help='NanoApps checkout')
     ap.add_argument('--app', type=Path, required=True, help='built angrybirds.hbapp')
     ap.add_argument('--data', type=Path, required=True, help='converted data with files.lst')
+    ap.add_argument('--icon', type=Path, required=True, help='112 by 112 RGBA icon from build_icon.py')
     ap.add_argument('--base-pack', type=Path, required=True, help='current AllApps-B.pack')
     ap.add_argument('--out', type=Path, required=True, help='new staging directory')
     args = ap.parse_args()
@@ -45,6 +46,12 @@ def main():
     sys.path.insert(0, str(args.sdk.resolve() / 'tools'))
     import build_apps
     import mkapp
+    from PIL import Image
+
+    with Image.open(args.icon) as source_icon:
+        icon = source_icon.convert('RGBA')
+    if icon.size != (build_apps.SIZE, build_apps.SIZE):
+        raise ValueError('icon must match the NanoApps tile size')
 
     app = args.app.read_bytes()
     magic, entry, image, span, relocs, align = struct.unpack_from('<6I', app)
@@ -104,7 +111,7 @@ def main():
         mkapp.build_pack(str(apps / 'AllApps-B.pack'), bundle_files + [str(new_bundle)])
         icons = scratch / 'icons'
         icons.mkdir()
-        build_apps.make_png('dove', (200, 16, 46), icons / '229441873_1888.png')
+        icon.save(icons / '229441873_1888.png')
         output = io.BytesIO()
         build_apps.pack_silverdb(output, icons)
         db = output.getvalue()

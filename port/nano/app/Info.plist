@@ -6,6 +6,6 @@
 	<key>CFBundleExecutable</key>	<string>angrybirds</string>
 	<key>HBAppKind</key>			<integer>2</integer>
 	<key>HBIconGlyph</key>		<string>dove</string>
-	<key>HBIconColor</key>		<string>#c8102e</string>
+	<key>HBIconColor</key>		<string>#2980b9</string>
 </dict>
 </plist>

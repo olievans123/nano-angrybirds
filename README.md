@@ -18,7 +18,10 @@ The current build also caches render rotations and separates callback-entry
 overhead from gap timing. Its saved five-second checkpoint reports 53.4 FPS;
 a full 30-second sample is still needed for this build. Entry setup averages
 0.004 ms, within a 14.071 ms gap between platform callbacks.
-The FPS counter and recorder remain enabled.
+The on-screen FPS counter has been removed, including its font texture and drawing
+work. The background recorder remains enabled, with at most two report writes per launch.
+The home-screen icon uses the original red-bird sprite inside the same glossy
+circular frame as the Mario Kart and Mario 64 icons. No generated artwork is used.
 Audio is currently silent on both platforms.
 
 No game binary or assets are tracked here. The converter expects an existing
@@ -66,7 +69,7 @@ make -C /path/to/NanoApps/apps/angrybirds AB_DIR=/absolute/path/to/port -j4
 
 The engine build rejects static constructors; the application build checks Thumb
 code for unsupported floating-point instructions and validates relocations.
-The profiling app is about 257 KiB on disk and uses a separate allocation arena plus up to
+The app is about 256 KiB on disk and uses a separate allocation arena plus up to
 3 MiB of texture pixel data. Driver overhead is additional.
 
 ## Prepare an installation
@@ -76,13 +79,23 @@ other apps' bundle bytes, adds Angry Birds, validates asset file sizes, and writ
 checksums. It does not access a device.
 
 ```sh
+.venv/bin/python tools/build_icon.py \
+  --sdk /path/to/NanoApps \
+  --source v1.0/Payload/AngryBirds.app/data \
+  --out port/build/icon.png
 .venv/bin/python tools/stage_nano.py \
   --sdk /path/to/NanoApps \
   --app /path/to/angrybirds.hbapp \
   --data port/build/data-small-pages \
+  --icon port/build/icon.png \
   --base-pack /path/to/current/AllApps-B.pack \
   --out port/build/new-stage
 ```
+
+The icon builder reads `BIRD_RED` from the original `INGAME` atlas and uses the
+SDK's existing icon compositor. Its PNG remains under the ignored build directory,
+alongside the other converted game assets. For the SDK's full app builder, copy
+that PNG to `apps/angrybirds/icon.png` in the NanoApps checkout.
 
 The stage contains `/Apps/Executables/Angry Birds.hbapp`, its icon,
 `/Apps/Data/AngryBirds/`, and the augmented `/Apps/AllApps-B.pack`.
@@ -174,9 +187,9 @@ python3 tests/qemu/build.py /path/to/NanoApps 8 build/data-small-pages tests/lev
 qemu-arm -cpu cortex-a7 build/qemu/abtest
 ```
 
-The profiling build displays FPS in the lower-right corner. This uses the interval
-between device frame callbacks, including time spent outside the game callback;
-it is not the reciprocal of CPU work time. After a two-second level warmup it
+The background recorder measures the interval between device frame callbacks,
+including time spent outside the game callback; FPS is not the reciprocal of CPU
+work time. There is no on-screen counter. After a two-second level warmup it
 saves an initial report after five measured seconds, then replaces it once after
 30 measured seconds. Samples survive level changes; each new level adds its own
 two-second warmup. At most two writes occur per launch, at the start of the next
@@ -199,7 +212,8 @@ V6 adds `entry` for the mean time spent in the app entry wrapper, principally
 FP-context attachment; this is already part of `gap` and must not be added to it.
 `gap50_ms` and `gap95_ms` describe the gap distribution, with the same one-ms
 buckets and 200 ms cap used for frame intervals.
-The HUD adds one small texture and two draw batches. Do not enable `trace.once`
+The profiling builds included a HUD with one small texture and two draw batches;
+the current build removes it. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.
 
 The previous recorder required 30 seconds within one level and discarded its
@@ -326,8 +340,8 @@ uses both routines. App-specific linker wrappers now copy aligned words in group
 of sixteen bytes, including backward overlap, and accelerate `memset` too. They
 retain byte handling for incompatible alignments and tails, never access beyond
 the requested range, and use integer instructions so they work before FP setup.
-The SDK itself is unchanged. The FPS HUD now formats its text only when the
-displayed value changes, rather than every frame.
+The SDK itself is unchanged. At this stage, the FPS HUD was also changed to format
+its text only when the displayed value changed. The current build removes the HUD.
 
 The wrappers pass 276,776 alignment, overlap, bounds, and data-preservation cases
 under host AddressSanitizer/UndefinedBehaviorSanitizer and in the ARM regression.

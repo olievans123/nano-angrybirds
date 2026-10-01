@@ -292,7 +292,6 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
         game_frame(dt, &t);
         game_end = plat_time_us();
         if (sLevelTraceFrames) port_checkpoint("level-updated", "", n);
-        port_perf_draw(sLogW, sLogH);
         gfx_end_frame();
         finish = plat_time_us();
         port_perf_frame(interval, (uint32_t)(finish - now),
