@@ -24,6 +24,16 @@ The home-screen icon uses the original red-bird sprite inside the same glossy
 circular frame as the Mario Kart and Mario 64 icons. No generated artwork is used.
 Audio is currently silent on both platforms.
 
+A blank sky-coloured screen part-way through a level was the script running out of
+memory: Lua 5.1 does not collect before reporting "not enough memory", and with its
+default collector settings the script's footprint in the nano's 2 MiB arena peaked
+at about 2.7 MiB on level 1-2 (host model: `abhost -M 1500 -G 200,200` reproduces it).
+The collector now runs with pause 110 / step multiplier 400 (peaks of 1.2-1.4 MiB on
+the levels tried), a memory error collects and carries on instead of stopping the
+game, and each level load ends with a full collection. Installed on the test device;
+confirmation from play is pending. The device report (`perf.txt`, v7) now also records
+frame-interval buckets, callback CPU percentiles and the minimum free arena.
+
 No game binary or assets are tracked here. The converter expects an existing
 Angry Birds 1.0 `AngryBirds.app/data` directory.
 
