@@ -9,7 +9,8 @@ was confirmed much smoother by the user; its device report averaged 23.7 FPS.
 The latest build also replaces full-heap allocation searches with free lists;
 its latest 30-second device sample averaged 45.9 FPS with zero allocation failures.
 The subsequent renderer update reduces draw calls by 36–38% in fixed-input host
-replays; its device FPS improvement has not yet been measured.
+replays. Its first 30-second device sample averaged 46.9 FPS, with draw submission
+averaging 2.49 ms versus 3.49 ms before; the playthroughs used different inputs.
 The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
@@ -268,8 +269,30 @@ test checks level completion, scoring, save reload, and level 1-2 impacts.
 The ARM replay with the minimum 2 MiB arena completes 4,600 frames, scoring 17,880
 with five mask builds and zero allocation failures. Including the FPS HUD, it
 submits 75,121 draws and combines 45,483 batches. These are workload counts with
-mocked graphics, not a device benchmark. The last measured hardware result is
-still 45.9 FPS from the allocator build.
+mocked graphics, not a device benchmark.
+
+The first v4 device report after the renderer update recorded 1,410 callbacks in
+30.021 seconds:
+
+| Device measurement | Allocator build (v3) | Renderer build (v4) |
+| --- | ---: | ---: |
+| Reported average FPS | 45.9 | 46.9 |
+| Mean callback interval | 21.77 ms | 21.29 ms |
+| 95th-percentile interval | 35 ms | 35 ms |
+| Frames exceeding 50 ms | 7/1,378 (0.51%) | 3/1,410 (0.21%) |
+| Worst interval | 140.85 ms | 67.22 ms |
+| Mean app callback work | 6.81 ms | 6.63 ms |
+| Mean draw submission | 3.49 ms | 2.49 ms |
+
+Draw submission averaged 28.6% less time. Mean game work increased from 3.13 ms
+to 3.95 ms, including physics increasing from 0.37 ms to 0.90 ms, so these samples
+represent different workloads. The v4 report averages 21 draws, 12 merged batches,
+and 33 batch-state calls per frame, with three mask builds and zero allocation
+failures. Its final frame uses 1,978 KiB of texture data. About 14.66 ms of the
+average callback interval remains outside measured app work; the report cannot
+separate scheduling, presentation, and other resident activity. The modest FPS
+increase and reduced stalls in this sample do not establish a repeatable gain or
+long-session stability.
 
 To compare two host builds that contain the `AB_REPLAY_SEED` test hook:
 
