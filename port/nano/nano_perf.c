@@ -44,13 +44,18 @@ typedef struct {
     uint32_t alloc_failures, masks;
 } Samples;
 
+/* The costliest frames of the sample, with what they spent their time on. */
+#define NWORST 4
+typedef struct { uint32_t frame, at_ms, cpu, game, submit, physics, io, upload, script, native, pre, masks, steps; } Worst;
+static Worst sWorst[NWORST];
+
 uint32_t port_perf_entry_us;
 uint8_t port_fast_redraw;         /* set by the app entry: the resident honours a short heartbeat */
 static Samples sTotal;
 static uint32_t sWarmupUs, sGapEstimate = 7800, sPaceUs;
 static int sActive, sSaved, sEarlySaved, sReportBytes, sSkipSample, sPhase, sBest = -1;
 static uint64_t sPhaseStart;
-static char sReport[4096];
+static char sReport[5120];
 
 uint32_t port_perf_pace_us(void) { return sPaceUs; }
 void port_perf_set_pace(uint32_t us) { sPaceUs = us; }
@@ -105,7 +110,7 @@ static void prepare_report(void)
 {
     int n = 0, b, i;
     const Phase *f = &sTotal.phase[0];
-    n = put(n, "AB profile v11; us unless noted; warmup=2s/level\n");
+    n = put(n, "AB profile v12; us unless noted; warmup=2s/level\n");
     n = put(n, "fast_redraw=%u pace=%u gap_short=%u gap_long=%u\n", (unsigned)port_fast_redraw, (unsigned)sPaceUs,
             (unsigned)sGapShort, (unsigned)sGapLong);
     n = put(n, "frames=%u elapsed=%u fps10=%u worst=%u gap_estimate=%u\n", (unsigned)sTotal.frames,
@@ -132,6 +137,13 @@ static void prepare_report(void)
             (unsigned)game_stat_lua_failures, (unsigned)game_stat_lua_recoveries,
             (unsigned)(gfx_stat_tex_bytes / 1024u), gfx_stat_textures, (unsigned)sTotal.alloc_failures,
             (unsigned)sTotal.masks);
+    for (i = 0; i < NWORST && sWorst[i].cpu; i++) {
+        const Worst *w = &sWorst[i];
+        n = put(n, "worst%d: frame=%u at_ms=%u cpu=%u game=%u submit=%u physics=%u io=%u upload=%u script=%u native=%u "
+                   "pre=%u masks=%u steps=%u\n", i, (unsigned)w->frame, (unsigned)w->at_ms, (unsigned)w->cpu,
+                (unsigned)w->game, (unsigned)w->submit, (unsigned)w->physics, (unsigned)w->io, (unsigned)w->upload,
+                (unsigned)w->script, (unsigned)w->native, (unsigned)w->pre, (unsigned)w->masks, (unsigned)w->steps);
+    }
     n = put(n, "free-running sequence (interval,cpu,gap in 0.1 ms):");
     for (i = 0; i < SEQ_FRAMES && sTotal.seq[i][0]; i++)
         n = put(n, " %u,%u,%u", (unsigned)sTotal.seq[i][0], (unsigned)sTotal.seq[i][1], (unsigned)sTotal.seq[i][2]);
@@ -160,7 +172,6 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
                      uint32_t submit, uint32_t physics, uint32_t io, uint32_t upload,
                      uint32_t gap)
 {
-    (void)physics; (void)io; (void)upload;
     if (!interval) return;  /* first callback has no previous timestamp */
     /* the platform's own time between our frames, when it does not skip a refresh */
     if (gap > 2000u && gap < 16000u) {
@@ -200,6 +211,13 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
         sTotal.gap_hist[bin(gap, 32)]++;
         sTotal.cpu_hist[bin(cpu, 42)]++;
         if (cpu > sTotal.cpu_worst) sTotal.cpu_worst = cpu;
+    }
+    if (cpu > sWorst[NWORST - 1].cpu) {
+        int k = NWORST - 1;
+        while (k > 0 && cpu > sWorst[k - 1].cpu) { sWorst[k] = sWorst[k - 1]; k--; }
+        sWorst[k] = (Worst){ sTotal.frames, (uint32_t)(sTotal.elapsed / 1000u), cpu, game, submit, physics, io, upload,
+                             game_prof_us[PROF_SCRIPT], game_prof_us[PROF_NATIVE], game_prof_us[PROF_PRE],
+                             game_stat_mask_builds, game_stat_steps };
     }
     sTotal.frames++;
     sTotal.elapsed += interval;
