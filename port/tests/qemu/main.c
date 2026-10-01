@@ -12,6 +12,7 @@
 #include "platform.h"
 #include "gfx.h"
 #include "../../nano/nano_perf.h"
+#include "../../nano/nano_alloc.h"
 #undef port_checkpoint
 void port_checkpoint(const char *stage, const char *detail, uint32_t value) {
     if (!strcmp(stage, "level-ready")) port_perf_level_loaded();
@@ -98,6 +99,7 @@ int main(void) {
     printf("arena %u bytes\n", port_arena_size());
     PlatTouches touch = {0};
     uint32_t masks = 0;
+    uint64_t allocations = 0, probes = 0, copied = 0, failures = 0;
     for (int frame = 0; frame < TEST_FRAMES; frame++) {
         uint32_t interval = TEST_JITTER ? (frame & 1 ? 43333 : 23333) : 33333;
         now += interval;
@@ -109,19 +111,28 @@ int main(void) {
             }
         }
         port_perf_flush();
+        port_alloc_stats_reset();
         gfx_begin_frame(240, 432, 576, 320, 1, 0, 0, 0);
         game_frame(TEST_JITTER ? (frame & 1 ? 1.3f : 0.7f) / 30.f : 1.f/30.f, &touch);
         masks += game_stat_mask_builds;
         port_perf_draw(576, 320);
         gfx_end_frame();
+        PortAllocStats ast = port_alloc_stats();
+        allocations += ast.allocations; probes += ast.probes; copied += ast.copied;
+        failures += ast.failures;
         port_perf_frame(interval, 0, 0, 0, 0, 0, 0); /* simulated cadence, never a device benchmark */
         if (frame % 100 == 0) {
             printf("frame %d, Lua %d KiB, texture %u KiB, arena largest %u\n", frame,
                    game_lua_kb(), gfx_stat_tex_bytes/1024, port_arena_largest_free());
             game_debug_dump("score,levelCompleted,currentBirdName,levelName");
+            printf("allocator frame: %u allocations, %u probes, %u copied\n",
+                   ast.allocations, ast.probes, ast.copied);
         }
     }
     printf("completed %d frames; %u mask builds\n", TEST_FRAMES, masks);
+    printf("allocator totals: %llu allocations, %llu probes, %llu copied bytes, %llu failures\n",
+           (unsigned long long)allocations, (unsigned long long)probes,
+           (unsigned long long)copied, (unsigned long long)failures);
     port_log_flush("test");
     return 0;
 }

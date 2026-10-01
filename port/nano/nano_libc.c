@@ -3,7 +3,7 @@
  *
  * newlib (ARM-mode softfp multilib) supplies string/ctype/setjmp; this file replaces the
  * parts that would drag in newlib's reentrant stdio and sbrk heap:
- *   - malloc family in one arena the resident frees on unload (see below);
+ *   - malloc family in one resident-owned arena (nano_alloc.c);
  *   - printf family formatting into a log ring written to /Apps/Data/AngryBirds/log.txt;
  *   - the few stdio entry points Lua's libraries reference (never used for real files:
  *     the port loads everything through plat_read_file). */
@@ -22,140 +22,8 @@
 
 #define AB_DIR "/Apps/Data/AngryBirds"
 
-/* ---- heap ---- */
-/* All of the app's allocations come from ONE OS block registered as the app's aux block
- * (hb_heap.h): the resident frees that block when it unloads the app (switching to
- * another app), and nothing else. Separate hb_os_alloc blocks outlived the app and left
- * the next one (Mario 64) short of memory. Exhaustion returns NULL; it must not consume
- * the GL reserve or leave untracked allocations behind when the app unloads. */
-#ifndef PORT_ARENA_SIZE
-#define PORT_ARENA_SIZE 0x400000u   /* Lua + physics + sheet indexes + temporary ground-mask pages */
-#endif
-#define PORT_ARENA_MIN 0x200000u
-#define GL_RESERVE     0x600000u   /* OS heap left for the GL driver and the game's textures (budget in nano_platform.c) */
-typedef struct { uint32_t size, used, pad[2]; } ArenaBlk;   /* 16 bytes; size includes it */
-static uint8_t *sArena;
-static uint32_t sArenaSize, sHeapFreeAtInit;
-
-static void arena_init(void) {
-    if (sArena) return;
-    if (HB_APP_AUX_BLOCK) {             /* shouldn't happen: the resident clears it */
-        hb_os_free(HB_APP_AUX_BLOCK);
-        HB_APP_AUX_BLOCK = NULL;
-    }
-    /* Leave GL_RESERVE of the OS heap for the GL driver, which also holds the textures
-     * (the driver reboots the iPod when it runs out). Below PORT_ARENA_MIN the game can't
-     * fit anyway, so take at least that. */
-    uint32_t size = PORT_ARENA_SIZE, freeb = hb_os_heap_free();
-    if (freeb > GL_RESERVE + PORT_ARENA_MIN && freeb - GL_RESERVE < size)
-        size = (freeb - GL_RESERVE) & ~0xFFFFu;
-    else if (freeb <= GL_RESERVE + PORT_ARENA_MIN)
-        size = PORT_ARENA_MIN;
-    while (!(sArena = hb_os_alloc(size)) && size > 0x100000u)
-        size -= 0x80000u;
-    if (!sArena) return;
-    sArenaSize = size & ~15u;
-    HB_APP_AUX_BLOCK = sArena;
-    ArenaBlk *b = (ArenaBlk *)sArena;
-    b->size = sArenaSize;
-    b->used = 0;
-    sHeapFreeAtInit = freeb;   /* logged later: no logging from inside the allocator */
-}
-
-uint32_t port_arena_size(void) { return sArenaSize; }
-uint32_t port_heap_free_at_arena_init(void) { return sHeapFreeAtInit; }
-
-static void *arena_alloc(uint32_t n) {
-    arena_init();
-    if (!sArena) return NULL;
-    n = ((n + 15u) & ~15u) + sizeof(ArenaBlk);
-    uint32_t off = 0;
-    while (off < sArenaSize) {
-        ArenaBlk *b = (ArenaBlk *)(sArena + off);
-        if (!b->used) {
-            /* merge the free blocks that follow (frees don't coalesce) */
-            while (off + b->size < sArenaSize) {
-                ArenaBlk *nb = (ArenaBlk *)(sArena + off + b->size);
-                if (nb->used) break;
-                b->size += nb->size;
-            }
-            if (b->size >= n) {
-                if (b->size - n >= 64) {
-                    ArenaBlk *rest = (ArenaBlk *)(sArena + off + n);
-                    rest->size = b->size - n;
-                    rest->used = 0;
-                    b->size = n;
-                }
-                b->used = 1;
-                return b + 1;
-            }
-        }
-        off += b->size;
-    }
-    return NULL;
-}
-
-/* Largest free run in the arena (coalescing as it goes), for sizing caches. */
-uint32_t port_arena_largest_free(void) {
-    uint32_t off = 0, best = 0;
-    if (!sArena) return 0;
-    while (off < sArenaSize) {
-        ArenaBlk *b = (ArenaBlk *)(sArena + off);
-        if (!b->used) {
-            while (off + b->size < sArenaSize) {
-                ArenaBlk *nb = (ArenaBlk *)(sArena + off + b->size);
-                if (nb->used) break;
-                b->size += nb->size;
-            }
-            if (b->size > best) best = b->size;
-        }
-        off += b->size;
-    }
-    return best;
-}
-
-static int in_arena(const void *p) {
-    return sArena && (const uint8_t *)p >= sArena && (const uint8_t *)p < sArena + sArenaSize;
-}
-
-typedef struct { void *base; uint32_t size; uint32_t pad[2]; } AllocHdr;   /* 16 bytes */
-
-void *memalign(size_t align, size_t size) {
-    if (align < 16) align = 16;
-    uint32_t n = size + align + sizeof(AllocHdr);
-    uint8_t *raw = arena_alloc(n);
-    if (!raw) {
-        printf("OOM: %u bytes\n", (unsigned)size);
-        return NULL;
-    }
-    uintptr_t p = ((uintptr_t)raw + sizeof(AllocHdr) + align - 1) & ~(uintptr_t)(align - 1);
-    AllocHdr *h = (AllocHdr *)p - 1;
-    h->base = raw;
-    h->size = size;
-    return (void *)p;
-}
-void *malloc(size_t size) { return memalign(16, size); }
-void free(void *p) {
-    if (!p) return;
-    void *base = ((AllocHdr *)p - 1)->base;
-    if (in_arena(base)) ((ArenaBlk *)base - 1)->used = 0;
-    else hb_os_free(base);
-}
-void *calloc(size_t n, size_t sz) {
-    void *p = malloc(n * sz);
-    if (p) memset(p, 0, n * sz);
-    return p;
-}
-void *realloc(void *p, size_t size) {
-    if (!p) return malloc(size);
-    void *q = malloc(size);
-    if (q) {
-        uint32_t old = ((AllocHdr *)p - 1)->size;
-        memcpy(q, p, old < size ? old : size);
-        free(p);
-    }
-    return q;
-}
+/* The arena allocator is in nano_alloc.c. */
+extern void *memalign(size_t align, size_t size);
 
 /* ---- log ring + printf ---- */
 #define LOG_SIZE 8192

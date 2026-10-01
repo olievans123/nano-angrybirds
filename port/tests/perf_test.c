@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../nano/nano_perf.h"
+#include "../nano/nano_alloc.h"
 #include "../src/gfx.h"
 
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
@@ -11,6 +12,7 @@ uint32_t gfx_stat_tex_bytes;
 uint32_t game_stat_mask_builds;
 static char report[4096];
 static int writes;
+PortAllocStats port_alloc_stats(void) { return (PortAllocStats){10, 50, 8, 0}; }
 int plat_write_file(const char *path, const void *data, uint32_t size) {
     assert(!strcmp(path, "perf.txt") && size < 512);
     memcpy(report, data, size); report[size] = 0; writes++;
@@ -33,6 +35,7 @@ int main(int argc, char **argv) {
     assert(writes == 1);
     assert(strstr(report, "frames=600 elapsed=30000000 fps10=200\n"));
     assert(strstr(report, "cpu=6000 game=3000 submit=2000"));
+    assert(strstr(report, "alloc_avg=10 probes_avg=50 copy_B_avg=8 alloc_failures=0"));
     assert(strstr(report, jitter ? "p95_ms=84 worst=83333" : "p95_ms=50 worst=50000"));
     assert(strstr(report, jitter ? "slow33=300 slow50=300" : "slow33=600 slow50=0"));
     port_perf_level_loaded();

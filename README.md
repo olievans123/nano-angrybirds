@@ -5,8 +5,9 @@ assets. The Mac harness is playable; the nano app builds and has been installed 
 the existing NanoApps test device. The user confirmed that repacking asset pages to
 256×128 fixed the reboot entering level 1. A later test rebooted during a pig impact
 in level 1-2. A fix for repeated scenery rebuilding and oversized generated textures
-is now installed; hardware confirmation is pending. An on-device FPS counter and
-timing recorder remain enabled to measure the result.
+was confirmed much smoother by the user; its device report averaged 23.7 FPS.
+The latest build also replaces full-heap allocation searches with free lists;
+its hardware performance is not measured yet. The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
 No game binary or assets are tracked here. The converter expects an existing
@@ -54,7 +55,7 @@ make -C /path/to/NanoApps/apps/angrybirds AB_DIR=/absolute/path/to/port -j4
 
 The engine build rejects static constructors; the application build checks Thumb
 code for unsupported floating-point instructions and validates relocations.
-The profiling app is about 252 KiB on disk and uses a separate allocation arena plus up to
+The profiling app is about 254 KiB on disk and uses a separate allocation arena plus up to
 3 MiB of texture pixel data. Driver overhead is additional.
 
 ## Prepare an installation
@@ -105,7 +106,7 @@ and on the mini PC under `~/nano-ab/device-backup-20261001/`.
   `~/nano-ab/device-backup-20261001/before-small-pages/`.
 
 On hardware, hold the nano with Home on the right. Home exits the app; relaunching
-starts it fresh. Post-fix device frame rate and long-session stability still need
+starts it fresh. Allocator-update frame rate and long-session stability still need
 hardware confirmation. The engine analysis notes are under `analysis/`;
 they are evidence for the reimplementation, not proof of complete behavioral parity.
 
@@ -148,6 +149,12 @@ Generated ground textures now follow the small-page limits already used for asse
 the old 512×512 runtime upload is gone. This addresses a known driver risk, but a
 real-device level 1-2 replay is still needed to confirm the reported reboot is fixed.
 
+The subsequent device report contains 712 callbacks in 30.025 seconds, averaging
+23.7 FPS (42.17 ms between callbacks; p95 64 ms). Callback work averaged 27.03 ms:
+23.48 ms game update, 3.37 ms draw submission, 0.86 ms physics, 0.27 ms IO and
+0.04 ms texture upload. It recorded three mask rebuilds. The user confirmed much
+smoother play; extended stability remains unverified.
+
 To run the matching ARM regression after building the library:
 
 ```sh
@@ -168,3 +175,34 @@ time. `mask_builds` counts scenery rebuilds during the measured window; the
 draw, quad and texture fields describe its final frame.
 The HUD adds one small texture and two draw batches. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.
+
+## Allocator optimization
+
+The original allocator searched from the start of the entire arena for every
+allocation. During the ARM replay, ten small allocations in one frame visited
+151,674 blocks. The new allocator searches size-binned free lists, merges adjacent
+free blocks immediately, and resizes allocations in place when possible. It keeps
+the existing 2–4 MiB arena policy and the OS/graphics memory reserve.
+
+In the same 4,600-frame ARM replay with a 2 MiB arena:
+
+| Work | Before | After |
+| --- | ---: | ---: |
+| Allocation searches | 34,141 | 34,068 |
+| Blocks examined | 291,029,743 | 505,422 |
+| Bytes copied by realloc | 10,680 | 8,336 |
+| Final level 1-2 score | 17,880 | 17,880 |
+
+The new run reports zero allocation failures. The 99.8% reduction is in allocator
+search work, not a measured device FPS gain. On-device reports now include average
+allocation/search/copy counts per frame and total allocation failures for the window.
+
+The allocator stress test checks alignment, data preservation, failed growth,
+shrinking under memory pressure, free-list consistency and full coalescing after
+100,000 randomized operations. Run it with sanitizers on the host:
+
+```sh
+cc -std=c99 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
+  port/tests/allocator_test.c -o port/build/allocator_test
+port/build/allocator_test
+```

@@ -17,6 +17,7 @@
 #include "../src/gfx.h"
 #include "../src/assets.h"
 #include "nano_perf.h"
+#include "nano_alloc.h"
 
 #define AB_DIR   "/Apps/Data/AngryBirds"
 #define LOG_PATH AB_DIR "/log.txt"
@@ -273,6 +274,7 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
     {
         PlatTouches t;
         port_perf_flush();
+        port_alloc_stats_reset();
         uint64_t now = plat_time_us(), t0, game_start, game_end, finish;
         uint32_t interval = last ? (uint32_t)(now - last) : 0;
         float dt = last ? (float)(now - last) * 1e-6f : 1.f / 60.f;

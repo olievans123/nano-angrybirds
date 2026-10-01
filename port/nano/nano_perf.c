@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "nano_perf.h"
+#include "nano_alloc.h"
 #include "../src/gfx.h"
 #include "../src/platform.h"
 
@@ -11,6 +12,7 @@ typedef struct {
     uint64_t interval, cpu, game, submit, physics, io, upload;
     uint32_t frames, worst, slow33, slow50, histogram[201];
     uint32_t masks;
+    uint64_t allocations, probes, copied, alloc_failures;
 } Samples;
 static Samples sTotal;
 static uint64_t sWindowUs, sWarmupUs;
@@ -44,7 +46,8 @@ static void prepare_report(void)
         "frames=%u elapsed=%u fps10=%u\n"
         "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
         "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
-        "mask_builds=%u draws=%d quads=%d textures=%d tex_KiB=%u\n",
+        "mask_builds=%u draws=%d quads=%d textures=%d tex_KiB=%u\n"
+        "alloc_avg=%u probes_avg=%u copy_B_avg=%u alloc_failures=%u\n",
         (unsigned)sTotal.frames, (unsigned)sTotal.interval,
         (unsigned)(10000000ull * sTotal.frames / sTotal.interval),
         average(sTotal.interval), p95, (unsigned)sTotal.worst,
@@ -52,7 +55,9 @@ static void prepare_report(void)
         average(sTotal.cpu), average(sTotal.game), average(sTotal.submit),
         average(sTotal.physics), average(sTotal.io), average(sTotal.upload),
         (unsigned)sTotal.masks, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures,
-        (unsigned)(gfx_stat_tex_bytes / 1024u));
+        (unsigned)(gfx_stat_tex_bytes / 1024u),
+        average(sTotal.allocations), average(sTotal.probes), average(sTotal.copied),
+        (unsigned)sTotal.alloc_failures);
     if (n > 0 && (unsigned)n < sizeof(sReport))
         sReportBytes = n;
 }
@@ -90,6 +95,11 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     sTotal.io += io;
     sTotal.upload += upload;
     sTotal.masks += game_stat_mask_builds;
+    PortAllocStats ast = port_alloc_stats();
+    sTotal.allocations += ast.allocations;
+    sTotal.probes += ast.probes;
+    sTotal.copied += ast.copied;
+    sTotal.alloc_failures += ast.failures;
     if (interval > sTotal.worst) sTotal.worst = interval;
     sTotal.slow33 += interval > 33334u;
     sTotal.slow50 += interval > 50000u;

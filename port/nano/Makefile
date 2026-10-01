@@ -25,7 +25,7 @@ LUA_SRCS := lapi lcode ldebug ldo ldump lfunc lgc llex lmem lobject lopcodes lpa
             ltable ltm lundump lvm lzio lauxlib lbaselib ltablib lstrlib
 ENGINE_C := gfx assets render resources lua_libs numfmt
 ENGINE_CXX := game game_render particles
-NANO_C   := nano_platform nano_libc nano_math nano_perf
+NANO_C   := nano_platform nano_libc nano_math nano_perf nano_alloc
 B2_SRCS  := $(shell cd $(ROOT) && find Box2D -name '*.cpp')
 
 OBJS := $(LUA_SRCS:%=$(BUILD)/lua/%.o) $(ENGINE_C:%=$(BUILD)/src/%.o) $(ENGINE_CXX:%=$(BUILD)/src/%.o) \
