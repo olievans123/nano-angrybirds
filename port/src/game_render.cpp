@@ -322,6 +322,7 @@ struct MaskRect { int x, y, w, h, page; };
 static MaskRect sMasks[MAX_MASKS];
 static int sMaskCount, sMaskTextures[MASK_PAGES];
 static bool sMaskDirty;
+static const float kMaskMovePx = 0.25f, kMaskMoveRad = 0.0005f;   /* under a quarter texel */
 uint32_t game_stat_mask_builds;
 
 void render_object_removed(ObjData *d)
@@ -504,8 +505,12 @@ static int l_drawGame(lua_State *L)
         } else if (nmasked < MAX_MASKS) {
             masked[nmasked++] = e;
             const b2Vec2 pos = e->body->GetPosition();
-            if (e->maskSlot >= 0 && (e->maskX != pos.x || e->maskY != pos.y || e->maskAngle != e->body->GetAngle()))
-                stale = true;                   /* moved (level editor): bake again */
+            /* Bake again only if it really moved (level editor). Some "static" blocks are
+             * nudged by a few float ULPs during play; a rebuild costs ~0.2 s on the nano. */
+            if (e->maskSlot >= 0 && (fabsf(pos.x - e->maskX) * kWorld > kMaskMovePx ||
+                                     fabsf(pos.y - e->maskY) * kWorld > kMaskMovePx ||
+                                     fabsf(e->body->GetAngle() - e->maskAngle) > kMaskMoveRad))
+                stale = true;
         }
     }
     if (nmasked) {

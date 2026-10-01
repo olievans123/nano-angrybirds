@@ -110,7 +110,7 @@ static void prepare_report(void)
 {
     int n = 0, b, i;
     const Phase *f = &sTotal.phase[0];
-    n = put(n, "AB profile v12; us unless noted; warmup=2s/level\n");
+    n = put(n, "AB profile v13; us unless noted; warmup=2s/level\n");
     n = put(n, "fast_redraw=%u pace=%u gap_short=%u gap_long=%u\n", (unsigned)port_fast_redraw, (unsigned)sPaceUs,
             (unsigned)sGapShort, (unsigned)sGapLong);
     n = put(n, "frames=%u elapsed=%u fps10=%u worst=%u gap_estimate=%u\n", (unsigned)sTotal.frames,

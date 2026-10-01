@@ -34,7 +34,7 @@ static float sLogW = 576.f, sLogH = 320.f;
 static int sPanelW = 432, sPanelH = 240, sRot;
 static int sFps = 30;
 static int sJitter;
-static uint32_t sReads, sMaskBuilds;
+static uint32_t sReads, sMaskBuilds, sFrameCount;
 
 /* ---- platform ---- */
 uint64_t plat_time_us(void)
@@ -55,6 +55,7 @@ void *plat_read_file(const char *path, uint32_t *size, int save)
     if (!f)
         return NULL;
     sReads++;
+    if (getenv("AB_TRACE_RES")) fprintf(stderr, "[res] frame %u read %s\n", sFrameCount, path);
     fseek(f, 0, SEEK_END);
     n = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -181,6 +182,9 @@ static void run_frame(float dt)
         sRotationBuilds += game_stat_rotation_builds;
         sRotationHits += game_stat_rotation_hits;
         sMaskBuilds += game_stat_mask_builds;
+        if (game_stat_mask_builds && getenv("AB_TRACE_RES"))
+            fprintf(stderr, "[res] frame %u ground atlas build, %u us\n", sFrameCount, (unsigned)(plat_time_us() - t0));
+        sFrameCount++;
         gfx_end_frame();
         sTotalDraws += gfx_stat_draws;
         sTotalMerges += gfx_stat_merges;

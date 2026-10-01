@@ -334,7 +334,13 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
              * frame until its slot. A spin: the SDK has no sleep for the UI task. */
             uint32_t pace = port_perf_pace_us(), lead = port_perf_gap_estimate();
             if (pace > lead) {
-                uint64_t until = now + (pace - lead);
+                /* Keep a fixed beat rather than spacing each frame from the last: a frame
+                 * that overruns its slot is made up by the next one (the average frame
+                 * fits with room to spare). More than a frame off the beat: start again. */
+                static uint64_t slot;
+                if (!slot || now > slot + pace || now + pace < slot) slot = now;
+                slot += pace;
+                uint64_t until = slot - lead;
                 while (plat_time_us() < until) {}
             }
         }
