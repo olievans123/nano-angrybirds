@@ -10,6 +10,7 @@
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 int gfx_stat_merges, gfx_stat_state_calls;
 uint32_t gfx_stat_tex_bytes;
+uint32_t gfx_stat_buffer_us = 250;
 uint32_t game_stat_mask_builds;
 static char report[4096];
 static int writes;
@@ -29,6 +30,24 @@ int main(int argc, char **argv) {
     int transitions = argc > 1 && !strcmp(argv[1], "transitions");
     gfx_stat_draws = 12; gfx_stat_merges = 7; gfx_stat_state_calls = 22;
     port_perf_level_loaded();
+    if (argc > 1 && !strcmp(argv[1], "sixty")) {
+        for (int i = 0; i < 120; i++)
+            port_perf_frame(16667, 6000, 3000, 2000, 1000, 0, 0, 10667);
+        for (int i = 0; i < 1800; i++) {
+            int before = writes;
+            port_perf_frame(16667, 6000, 3000, 2000, 1000, 0, 0, 10667);
+            port_perf_flush();
+            if (writes > before && writes == 1) {
+                port_perf_frame(800000, 6000, 3000, 2000, 1000, 0, 0, 794000);
+                port_perf_flush();
+            }
+        }
+        assert(writes == 2);
+        assert(strstr(report, "frames=1800 elapsed=30000600 fps10=599"));
+        assert(strstr(report, "gap=10667 vbo=250 min=16667 at60=1800"));
+        puts("60 Hz cadence profile: PASS");
+        return 0;
+    }
     /* Short levels must not discard previous measurements. Simulate 3-second
      * measured segments separated by the 2-second load warmup. */
     int frame = 0, measured = 0;
@@ -36,13 +55,13 @@ int main(int argc, char **argv) {
         if (segment) port_perf_level_loaded();
         for (int warm = 0; warm < 40; warm++, frame++) {
             uint32_t interval = jitter ? (frame & 1 ? 83333 : 16667) : 50000;
-            port_perf_frame(interval, 6000, 3000, 2000, 1000, 0, 0);
+            port_perf_frame(interval, 6000, 3000, 2000, 1000, 0, 0, interval - 6000);
             port_perf_flush();
         }
         for (int i = 0; i < (transitions ? 60 : 600); i++, frame++) {
             uint32_t interval = jitter ? (frame & 1 ? 83333 : 16667) : 50000;
             int before = writes;
-            port_perf_frame(interval, 6000, 3000, 2000, 1000, 0, 0);
+            port_perf_frame(interval, 6000, 3000, 2000, 1000, 0, 0, interval - 6000);
             measured++;
             assert(writes == before); /* no writes during draw submission */
             port_perf_flush();
@@ -54,7 +73,7 @@ int main(int argc, char **argv) {
             if (writes > before && writes == 1) {
                 /* The next callback includes the recorder's own I/O stall;
                  * it must not inflate the reported gameplay frame times. */
-                port_perf_frame(800000, 6000, 3000, 2000, 1000, 0, 0);
+                port_perf_frame(800000, 6000, 3000, 2000, 1000, 0, 0, 794000);
                 port_perf_flush();
                 assert(writes == 1);
             }
@@ -65,10 +84,12 @@ int main(int argc, char **argv) {
     assert(strstr(report, "cpu=6000 game=3000 submit=2000"));
     assert(strstr(report, "alloc_avg=10 probes_avg=50 copy_B_avg=8 alloc_failures=0"));
     assert(strstr(report, "draw_avg=12 merge_avg=7 state_avg=22"));
+    assert(strstr(report, jitter ? "gap=44000 vbo=250 min=16667 at60=300" :
+                                  "gap=44000 vbo=250 min=50000 at60=0"));
     assert(strstr(report, jitter ? "p95_ms=84 worst=83333" : "p95_ms=50 worst=50000"));
     assert(strstr(report, jitter ? "slow33=300 slow50=300" : "slow33=600 slow50=0"));
     port_perf_level_loaded();
-    for (int i = 0; i < 1000; i++) port_perf_frame(50000, 6000, 3000, 2000, 1000, 0, 0);
+    for (int i = 0; i < 1000; i++) port_perf_frame(50000, 6000, 3000, 2000, 1000, 0, 0, 44000);
     port_perf_flush();
     assert(writes == 2); /* At most two report writes in a whole launch. */
     puts(transitions ? "short-level transitions: PASS" : jitter ? "jitter profile: PASS" : "steady profile: PASS");

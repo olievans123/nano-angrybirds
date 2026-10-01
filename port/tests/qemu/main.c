@@ -94,7 +94,9 @@ struct Event { int frame, down, x, y; };
 #include "events.h"
 
 int main(void) {
+    extern int memory_test(void);
     printf("nano ARM test start; heap %u\n", hb_os_heap_free());
+    if (memory_test()) return 3;
     if (game_init(576, 320)) return 2;
     printf("arena %u bytes\n", port_arena_size());
     PlatTouches touch = {0};
@@ -122,7 +124,7 @@ int main(void) {
         PortAllocStats ast = port_alloc_stats();
         allocations += ast.allocations; probes += ast.probes; copied += ast.copied;
         failures += ast.failures;
-        port_perf_frame(interval, 0, 0, 0, 0, 0, 0); /* simulated cadence, never a device benchmark */
+        port_perf_frame(interval, 0, 0, 0, 0, 0, 0, interval); /* simulated cadence, never a device benchmark */
         if (frame % 100 == 0) {
             printf("frame %d, Lua %d KiB, texture %u KiB, arena largest %u\n", frame,
                    game_lua_kb(), gfx_stat_tex_bytes/1024, port_arena_largest_free());

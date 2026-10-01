@@ -48,14 +48,16 @@ for ret, name, args in re.findall(r'\b(void|GLenum)\s+(gl\w+)\s*\(([^)]*)\)\s*;'
 flags = ['-marm', '-mcpu=cortex-a5', '-mfloat-abi=softfp', '-mfpu=vfpv3-d16',
          '-DTEST_FRAMES=%d' % frames, '-DTEST_JITTER=%d' % jitter,
          '-DTEST_HEAP_BYTES=%d' % (heap_mib * 1024 * 1024),
+         '-DAB_MEMORY_NO_MAIN',
          '-DTEST_DATA_DIR=' + json.dumps(data_dir),
          '-mword-relocations', '-fno-builtin', '-ffunction-sections', '-fdata-sections',
          '-O2', '-nostdlib', '-static', '-Wl,--gc-sections', '-Wl,-e,_start',
+         '-Wl,--wrap=memcpy,--wrap=memmove,--wrap=memset',
          '-I'+str(sdk/'sdk'), '-I'+str(port/'src'), '-I'+str(build)]
 cc = 'arm-none-eabi-gcc'
 libc = subprocess.check_output([cc, '-marm', '-march=armv5te+fp', '-mfloat-abi=softfp',
                                 '-print-file-name=libc.a'], text=True).strip()
 libgcc = subprocess.check_output([cc, *flags[:4], '-print-libgcc-file-name'], text=True).strip()
-subprocess.run([cc, *flags, str(port/'tests/qemu/main.c'), str(build/'gl.c'),
+subprocess.run([cc, *flags, str(port/'tests/qemu/main.c'), str(port/'tests/memory_test.c'), str(build/'gl.c'),
                 str(port/'build/nano/libab_nano.a'), libc, libgcc, '-o', str(build/'abtest')], check=True)
 print(build/'abtest')

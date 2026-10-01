@@ -11,5 +11,6 @@ include ../../sdk/hb_app.mk
 # newlib's ARM-state softfp multilib (no Thumb VFP code; see tools/check_no_thumb_fp.py).
 NEWLIB_FLAGS  := -marm -march=armv5te+fp -mfloat-abi=softfp
 LDLIBS        := $(AB_DIR)/build/nano/libab_nano.a \
-                 $(shell $(CC) $(NEWLIB_FLAGS) -print-file-name=libc.a) $(LIBGCC)
+                 $(shell $(CC) $(NEWLIB_FLAGS) -print-file-name=libc.a) $(LIBGCC) \
+                 -Wl,--wrap=memcpy,--wrap=memmove,--wrap=memset
 $(BUILD)/$(APP_NAME).reloc.elf: $(AB_DIR)/build/nano/libab_nano.a

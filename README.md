@@ -11,6 +11,8 @@ its latest 30-second device sample averaged 45.9 FPS with zero allocation failur
 The subsequent renderer update reduces draw calls by 36–38% in fixed-input host
 replays. Its first 30-second device sample averaged 46.9 FPS, with draw submission
 averaging 2.49 ms versus 3.49 ms before; the playthroughs used different inputs.
+The next build adds faster bulk memory operations and more detailed cadence
+measurement; its device result is pending.
 The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
@@ -59,7 +61,7 @@ make -C /path/to/NanoApps/apps/angrybirds AB_DIR=/absolute/path/to/port -j4
 
 The engine build rejects static constructors; the application build checks Thumb
 code for unsupported floating-point instructions and validates relocations.
-The profiling app is about 256 KiB on disk and uses a separate allocation arena plus up to
+The profiling app is about 257 KiB on disk and uses a separate allocation arena plus up to
 3 MiB of texture pixel data. Driver overhead is additional.
 
 ## Prepare an installation
@@ -174,7 +176,7 @@ saves an initial report after five measured seconds, then replaces it once after
 30 measured seconds. Samples survive level changes; each new level adds its own
 two-second warmup. At most two writes occur per launch, at the start of the next
 callback before new GL work. The interval containing the recorder's own disk write
-is excluded from the measurements. The compact v4 report fits within 512 bytes and includes mean
+is excluded from the measurements. The compact v5 report fits within 512 bytes and includes mean
 FPS, frame-time percentiles, slow-frame counts, game/physics/draw/IO/upload timings.
 `fps10` is FPS multiplied by ten; times are microseconds except `p95_ms`, whose
 histogram is capped at 200 ms. Physics, IO and upload times are subsets of game
@@ -183,6 +185,11 @@ draw, quad and texture fields describe its final frame.
 `draw_avg`, `merge_avg`, and `state_avg` average draw calls, merged batches, and
 batch-state GL calls across the measured window. State calls exclude frame setup,
 texture uploads, and vertex/color pointer setup.
+In v5, `gap` averages the directly timed gap from the end of the previous platform
+callback to the next frame's start (including unmeasured entry work), while `vbo`
+times the vertex-buffer upload and is a subset of submission time. `min` is the
+shortest callback interval; `at60` counts intervals at or below 16,667 microseconds.
+Neither field establishes that every frame meets 60 FPS.
 The HUD adds one small texture and two draw batches. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.
 
@@ -301,3 +308,36 @@ To compare two host builds that contain the `AB_REPLAY_SEED` test hook:
 ```
 
 The hook only controls the host's Lua random seed; it is excluded from nano builds.
+
+## Bulk memory optimization and the 60 FPS target
+
+Inspection of the linked app found that its SDK `memcpy` copied one byte per loop
+and newlib's overlapping backward `memmove` also used byte loops. Draw batching
+uses both routines. App-specific linker wrappers now copy aligned words in groups
+of sixteen bytes, including backward overlap, and accelerate `memset` too. They
+retain byte handling for incompatible alignments and tails, never access beyond
+the requested range, and use integer instructions so they work before FP setup.
+The SDK itself is unchanged. The FPS HUD now formats its text only when the
+displayed value changes, rather than every frame.
+
+The wrappers pass 276,776 alignment, overlap, bounds, and data-preservation cases
+under host AddressSanitizer/UndefinedBehaviorSanitizer and in the ARM regression.
+The 4,600-frame ARM replay retains score 17,880, five mask builds, the same render
+counts, and zero allocation failures. The extra vertex-upload timing preserves
+all 496 reference screenshots. The app's Thumb-FP and relocation checks pass.
+The update adds roughly 1 KiB to the executable and 60 bytes of static storage.
+
+```sh
+cc -std=c99 -g -O2 -fno-builtin -fsanitize=address,undefined \
+  -fno-omit-frame-pointer port/tests/memory_test.c port/nano/nano_memory.c \
+  -o port/build/memory_test
+port/build/memory_test
+cc -std=c99 -O2 port/tests/perf_test.c port/nano/nano_perf.c -o port/build/perf_test
+port/build/perf_test sixty
+```
+
+The new build has not yet been measured on hardware. The latest measured result
+remains 46.9 FPS. The GL surface app interface exposes a frame callback, without
+an app-selectable callback interval. The directly measured gap in v5 will help
+distinguish time between callbacks from the game work we can optimize; no 60 FPS
+claim is made from host timing or the simulated ARM cadence.

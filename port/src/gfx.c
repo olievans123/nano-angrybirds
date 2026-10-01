@@ -49,6 +49,7 @@ static float sDrawClip[4];
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 uint32_t gfx_stat_tex_bytes;
 uint32_t gfx_stat_upload_us;
+uint32_t gfx_stat_buffer_us;
 int gfx_stat_merges, gfx_stat_state_calls;
 
 int gfx_tex_create(int w, int h, int fmt, const void *pixels, int linear, int repeat)
@@ -187,6 +188,7 @@ void gfx_begin_frame(int panel_w, int panel_h, float logical_w, float logical_h,
     sFrameCount = sBatchCount = sOverflow = 0;
     sUploads = 0;
     gfx_stat_upload_us = 0;
+    gfx_stat_buffer_us = 0;
     gfx_stat_merges = gfx_stat_state_calls = sMovedVerts = 0;
     sDrawTextured = -1;
     sDrawTexture = 0;
@@ -339,7 +341,9 @@ void gfx_end_frame(void)
         if (!sVbo) glGenBuffers(1, &sVbo);
         if (sVbo) {
             glBindBuffer(GL_ARRAY_BUFFER, sVbo);
+            uint64_t buffer_start = plat_time_us();
             glBufferData(GL_ARRAY_BUFFER, sFrameCount * (GLsizeiptr)sizeof(Vert), sFrameVerts, GL_DYNAMIC_DRAW);
+            gfx_stat_buffer_us = (uint32_t)(plat_time_us() - buffer_start);
             glVertexPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, x));
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vert), (const void *)offsetof(Vert, c));
             glTexCoordPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, u));

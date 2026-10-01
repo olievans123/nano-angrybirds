@@ -14,6 +14,8 @@ typedef struct {
     uint32_t masks;
     uint64_t allocations, probes, copied, alloc_failures;
     uint64_t draws, merges, state_calls;
+    uint64_t gap, buffer;
+    uint32_t minimum, fast60;
 } Samples;
 static Samples sTotal;
 static uint64_t sWindowUs, sWarmupUs;
@@ -44,13 +46,14 @@ static void prepare_report(void)
         if (seen >= target) break;
     }
     int n = snprintf(sReport, sizeof(sReport),
-        "AB profile v4; times us except p95_ms; 2s warmup per level\n"
+        "AB profile v5; us except p95_ms; warmup=2s/level\n"
         "frames=%u elapsed=%u fps10=%u\n"
         "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
         "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
         "mask_builds=%u draws=%d quads=%d textures=%d tex_KiB=%u\n"
         "alloc_avg=%u probes_avg=%u copy_B_avg=%u alloc_failures=%u\n"
-        "draw_avg=%u merge_avg=%u state_avg=%u\n",
+        "draw_avg=%u merge_avg=%u state_avg=%u\n"
+        "gap=%u vbo=%u min=%u at60=%u\n",
         (unsigned)sTotal.frames, (unsigned)sTotal.interval,
         (unsigned)(10000000ull * sTotal.frames / sTotal.interval),
         average(sTotal.interval), p95, (unsigned)sTotal.worst,
@@ -61,7 +64,9 @@ static void prepare_report(void)
         (unsigned)(gfx_stat_tex_bytes / 1024u),
         average(sTotal.allocations), average(sTotal.probes), average(sTotal.copied),
         (unsigned)sTotal.alloc_failures, average(sTotal.draws),
-        average(sTotal.merges), average(sTotal.state_calls));
+        average(sTotal.merges), average(sTotal.state_calls),
+        average(sTotal.gap), average(sTotal.buffer),
+        (unsigned)sTotal.minimum, (unsigned)sTotal.fast60);
     if (n > 0 && (unsigned)n < sizeof(sReport))
         sReportBytes = n;
 }
@@ -76,7 +81,8 @@ void port_perf_flush(void)
 }
 
 void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
-                     uint32_t submit, uint32_t physics, uint32_t io, uint32_t upload)
+                     uint32_t submit, uint32_t physics, uint32_t io, uint32_t upload,
+                     uint32_t gap)
 {
     if (!interval) return;  /* first callback has no previous timestamp */
     sWindowUs += interval;
@@ -104,6 +110,10 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     sTotal.draws += gfx_stat_draws;
     sTotal.merges += gfx_stat_merges;
     sTotal.state_calls += gfx_stat_state_calls;
+    sTotal.gap += gap;
+    sTotal.buffer += gfx_stat_buffer_us;
+    if (!sTotal.minimum || interval < sTotal.minimum) sTotal.minimum = interval;
+    sTotal.fast60 += interval <= 16667u;
     PortAllocStats ast = port_alloc_stats();
     sTotal.allocations += ast.allocations;
     sTotal.probes += ast.probes;
@@ -151,13 +161,19 @@ void port_perf_draw(float width, float height)
         if (!sFont) return;
     }
     unsigned value = sFps10 > 9999 ? 9999 : sFps10;
-    char text[16];
-    if (sFps10) snprintf(text, sizeof(text), "%u.%u FPS", value / 10, value % 10);
-    else strcpy(text, "--.- FPS");
-    float x = width - (float)strlen(text) * 10.f - 6.f, y = height - 19.f;
+    static unsigned cached;
+    static char text[16];
+    static int length;
+    if (!length || cached != value) {
+        cached = value;
+        if (value) snprintf(text, sizeof(text), "%u.%u FPS", value / 10, value % 10);
+        else strcpy(text, "--.- FPS");
+        length = (int)strlen(text);
+    }
+    float x = width - (float)length * 10.f - 6.f, y = height - 19.f;
     gfx_set_clip(0, 0, 0, 0);
     gfx_set_blend(GFX_BLEND_ALPHA);
-    quad(0, x-3, y-2, (float)strlen(text)*10.f+4, 19, 0,0,0,0, 0xc0000000u);
+    quad(0, x-3, y-2, (float)length*10.f+4, 19, 0,0,0,0, 0xc0000000u);
     for (const char *p = text; *p; p++, x += 10.f) {
         int g = *p >= '0' && *p <= '9' ? *p - '0' :
                 *p == '.' ? 10 : *p == 'F' ? 11 : *p == 'P' ? 12 : *p == 'S' ? 13 : 14;

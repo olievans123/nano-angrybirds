@@ -226,6 +226,7 @@ void port_fatal(int code) {
 
 void ab_nano_frame(int w, int h, uint32_t frame) {
     static uint64_t last;
+    static uint64_t previous_end;
     static uint32_t n;
     (void)frame;
     sPanelW = w;
@@ -277,6 +278,7 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
         port_alloc_stats_reset();
         uint64_t now = plat_time_us(), t0, game_start, game_end, finish;
         uint32_t interval = last ? (uint32_t)(now - last) : 0;
+        uint32_t gap = previous_end ? (uint32_t)(now - previous_end) : 0;
         float dt = last ? (float)(now - last) * 1e-6f : 1.f / 60.f;
         uint32_t bg = game_bg_color(), us;
         last = now;
@@ -295,7 +297,7 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
         finish = plat_time_us();
         port_perf_frame(interval, (uint32_t)(finish - now),
                         (uint32_t)(game_end - game_start), (uint32_t)(finish - game_end),
-                        game_stat_physics_us, sIoUs, gfx_stat_upload_us);
+                        game_stat_physics_us, sIoUs, gfx_stat_upload_us, gap);
         if (sLevelTraceFrames) {
             port_checkpoint("level-drawn", "", n);
             sLevelTraceFrames--;
@@ -307,5 +309,6 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
                    (unsigned)(gfx_stat_tex_bytes / 1024u), game_lua_kb(), (unsigned)hb_os_heap_free());
         }
         n++;
+        previous_end = plat_time_us();
     }
 }
