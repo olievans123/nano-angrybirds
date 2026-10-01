@@ -261,6 +261,10 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
              * before starting so subsequent normal play never writes these checkpoints. */
             if (hb_fs_exists(AB_DIR "/trace.once") && hb_fs_remove(AB_DIR "/trace.once"))
                 sCheckpoints = 96;
+            /* With the short redraw heartbeat the platform shows frames as fast as we
+             * finish them (~10 ms); hold them to the display's 60 Hz instead. */
+            if (port_fast_redraw) port_perf_set_pace(16667);
+            printf("redraw: %s\n", port_fast_redraw ? "2 ms heartbeat, paced to 60 Hz" : "16 ms heartbeat, free-running");
             assets_set_texture_budget(TEXTURE_BUDGET);
             rc = game_init(sLogW, sLogH);
             printf("game_init: %d, %u ms, Lua heap %d KB, heap free %u\n", rc,

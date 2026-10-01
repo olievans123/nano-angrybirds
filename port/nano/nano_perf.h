@@ -9,6 +9,8 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
                      uint32_t gap);
 /* Frame pacing: the spacing to hold frames to (0 = none) and the platform's usual time
  * between the end of one frame's work and the next callback. */
+extern uint8_t port_fast_redraw;
 uint32_t port_perf_pace_us(void);
+void port_perf_set_pace(uint32_t us);
 uint32_t port_perf_gap_estimate(void);
 #endif

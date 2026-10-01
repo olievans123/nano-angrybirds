@@ -46,6 +46,7 @@ typedef struct {
 } Samples;
 
 uint32_t port_perf_entry_us;
+uint8_t port_fast_redraw;         /* set by the app entry: the resident honours a short heartbeat */
 static Samples sTotal;
 static uint32_t sWarmupUs, sGapEstimate = 7800, sPaceUs;
 static int sActive, sSaved, sEarlySaved, sReportBytes, sSkipSample, sPhase, sBest = -1;
@@ -53,6 +54,7 @@ static uint64_t sPhaseStart;
 static char sReport[4096];
 
 uint32_t port_perf_pace_us(void) { return sPaceUs; }
+void port_perf_set_pace(uint32_t us) { sPaceUs = us; }
 uint32_t port_perf_gap_estimate(void) { return sGapEstimate; }
 
 void port_perf_level_loaded(void)
@@ -99,7 +101,8 @@ static void prepare_report(void)
 {
     int n = 0, b, i;
     const Phase *f = &sTotal.phase[0];
-    n = put(n, "AB profile v9; us unless noted; warmup=2s/level\n");
+    n = put(n, "AB profile v10; us unless noted; warmup=2s/level\n");
+    n = put(n, "fast_redraw=%u pace=%u\n", (unsigned)port_fast_redraw, (unsigned)sPaceUs);
     n = put(n, "frames=%u elapsed=%u fps10=%u worst=%u gap_estimate=%u\n", (unsigned)sTotal.frames,
             (unsigned)sTotal.elapsed, (unsigned)(10000000ull * sTotal.frames / (sTotal.elapsed ? sTotal.elapsed : 1)),
             (unsigned)sTotal.worst, (unsigned)sGapEstimate);
@@ -210,8 +213,8 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
                 uint32_t sc = phase_score(&sTotal.phase[i]);
                 if (sc < best) { best = sc; sBest = i; }
             }
-            sPaceUs = sBest > 0 ? kTargets[sBest - 1] : 0;
-            if (!PACE_SWEEP) sBest = -1;
+            if (PACE_SWEEP) sPaceUs = sBest > 0 ? kTargets[sBest - 1] : 0;
+            else sBest = -1;
             sSaved = 1;
             sActive = 0;
             prepare_report();

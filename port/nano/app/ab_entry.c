@@ -18,6 +18,7 @@
 
 extern void ab_nano_frame(int w, int h, uint32_t frame);
 extern uint32_t port_perf_entry_us;
+extern uint8_t port_fast_redraw;
 
 typedef void (*gl_frame_fn)(int w, int h, uint32_t frame);
 
@@ -163,6 +164,15 @@ void *payload_entry(int op, void *fb, int w, int h, hb_shared_t *sh)
     for (p = __bss_start__; p < __bss_end__; p++)
         *p = 0;
     hb_shared = sh;
+    /* A resident that supports it (hb_shared.h: caps bit 0, the second former padding
+     * byte) redraws on a 2 ms heartbeat for us instead of 16 ms, so a dropped redraw
+     * request is retried at once; the game then paces itself to the display. With an
+     * older resident both bytes are zero and the game free-runs as before. */
+    port_fast_redraw = 0;
+    if (sh->pad[1] & 1u) {
+        sh->pad[0] = 2;
+        port_fast_redraw = 1;
+    }
     save_previous_crumbs();
     hb_trace_log("ABENT   ", s_ran_before, (uint32_t)(uintptr_t)__bss_end__);
     port_crumb("entry", hb_os_heap_free(), hb_os_heap_largest());
