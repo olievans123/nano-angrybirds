@@ -1,0 +1,39 @@
+/* platform.h — what the engine needs from the machine it runs on. */
+#ifndef AB_PLATFORM_H
+#define AB_PLATFORM_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+uint64_t plat_time_us(void);
+
+/* Read a whole file. `path` is relative to the game's data directory, or to the save
+ * directory when `save` is set. Returns a malloc'd buffer (caller frees) with one extra
+ * zero byte after the data, or NULL if the file is missing. */
+void *plat_read_file(const char *path, uint32_t *size, int save);
+int   plat_write_file(const char *path, const void *data, uint32_t size);   /* save directory */
+
+void plat_log(const char *fmt, ...);
+
+/* Fingers currently on the screen, in logical game pixels. */
+#define PLAT_MAX_TOUCHES 2
+typedef struct {
+    int count;
+    struct { float x, y; } pt[PLAT_MAX_TOUCHES];
+} PlatTouches;
+
+/* ---- the game, as the platform drives it ---- */
+int  game_init(float logical_w, float logical_h);                 /* 0 on success */
+void game_frame(float dt, const PlatTouches *touches);            /* update + draw (inside a gfx frame) */
+void game_gl_lost(void);                                           /* GL objects are gone */
+uint32_t game_bg_color(void);                                      /* 0xRRGGBB to clear with */
+int  game_wants_exit(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

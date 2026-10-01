@@ -1,0 +1,20 @@
+# the game itself (Rovio's binary and data) and anything derived from it stay out of git
+ipa/
+v1.0/
+v1.6.3/
+lua-src/
+decomp/
+decomp-annot/
+analysis-*.txt
+port/build/
+# tools fetched locally
+tools/ghidra_*/
+tools/unluac.jar
+ghidra/proj/
+ghidra/*.log
+third_party/*.zip
+third_party/*.tar.gz
+third_party/box2d-git/
+third_party/Box2D_v2.1.2/
+.venv/
+__pycache__/
