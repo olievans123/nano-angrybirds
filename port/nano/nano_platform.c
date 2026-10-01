@@ -324,6 +324,16 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
                    (unsigned)(gfx_stat_tex_bytes / 1024u), game_lua_kb(), (unsigned)hb_os_heap_free());
         }
         n++;
+        {
+            /* Pacing: finishing early does not get the frame shown sooner (the platform
+             * shows it about 8 ms after we return, or a whole refresh later), so hold the
+             * frame until its slot. A spin: the SDK has no sleep for the UI task. */
+            uint32_t pace = port_perf_pace_us(), lead = port_perf_gap_estimate();
+            if (pace > lead) {
+                uint64_t until = now + (pace - lead);
+                while (plat_time_us() < until) {}
+            }
+        }
         previous_end = plat_time_us();
     }
 }
