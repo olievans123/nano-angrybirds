@@ -39,6 +39,7 @@ void game_frame(float dt, const PlatTouches *touches);            /* update + dr
 void game_gl_lost(void);                                           /* GL objects are gone */
 uint32_t game_bg_color(void);                                      /* 0xRRGGBB to clear with */
 int  game_wants_exit(void);
+void game_debug_dump(const char *names);                           /* test hook: log script globals */
 
 #ifdef __cplusplus
 }

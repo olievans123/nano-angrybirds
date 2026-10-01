@@ -1314,6 +1314,36 @@ void game_frame(float dt, const PlatTouches *touches)
     lua_settop(G.L, 0);
 }
 
+/* Test hook: print script globals ("a,b.c,d") as one log line. */
+void game_debug_dump(const char *names)
+{
+    lua_State *L = G.L;
+    char line[512];
+    size_t n = 0;
+    while (*names && n < sizeof(line) - 64) {
+        char path[64];
+        size_t k = 0;
+        while (*names && *names != ',' && k < sizeof(path) - 1) path[k++] = *names++;
+        path[k] = 0;
+        if (*names == ',') names++;
+        env_push();
+        char *seg = path;
+        while (seg) {
+            char *dot = strchr(seg, '.');
+            if (dot) *dot = 0;
+            if (lua_istable(L, -1)) lua_getfield(L, -1, seg); else lua_pushnil(L);
+            lua_remove(L, -2);
+            if (dot) *dot = '.';
+            seg = dot ? dot + 1 : NULL;
+        }
+        const char *v = lua_isboolean(L, -1) ? (lua_toboolean(L, -1) ? "true" : "false") :
+                        lua_isstring(L, -1) ? lua_tostring(L, -1) : lua_typename(L, lua_type(L, -1));
+        n += (size_t)snprintf(line + n, sizeof(line) - n, "%s=%s ", path, v);
+        lua_pop(L, 1);
+    }
+    plat_log("%s", line);
+}
+
 void game_gl_lost(void)
 {
     assets_gl_lost();

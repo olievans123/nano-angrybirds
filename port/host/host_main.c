@@ -149,8 +149,15 @@ static void screenshot(const char *name)
 static PlatTouches sTouch;
 static uint32_t sFrame;
 
+static const char *sDumpNames;
+static int sDumpEvery = 1, sDumpFrom;
+
 static void run_frame(float dt)
 {
+    if (sDumpNames && (int)sFrame >= sDumpFrom && (sFrame % (uint32_t)sDumpEvery) == 0) {
+        fprintf(stderr, "[%u] ", sFrame);
+        game_debug_dump(sDumpNames);
+    }
     uint32_t bg = game_bg_color();
     gfx_begin_frame(sPanelW, sPanelH, sLogW, sLogH, sRot,
                     ((bg >> 16) & 255) / 255.f, ((bg >> 8) & 255) / 255.f, (bg & 255) / 255.f);
@@ -316,6 +323,9 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-i")) { load_script(v); i++; }
         else if (!strcmp(a, "-f")) { sFps = atoi(v); i++; }
         else if (!strcmp(a, "-x")) { sWinScale = atoi(v); i++; }
+        else if (!strcmp(a, "-D")) { sDumpNames = v; i++; }          /* log these script globals ... */
+        else if (!strcmp(a, "-De")) { sDumpEvery = atoi(v); i++; }   /* ... every N frames ... */
+        else if (!strcmp(a, "-Df")) { sDumpFrom = atoi(v); i++; }    /* ... from frame N */
         else { fprintf(stderr, "unknown option %s\n", a); return 2; }
     }
     if (sRot && !panel_set) { sPanelW = 240; sPanelH = 432; }
