@@ -49,6 +49,7 @@ const AbSprite *assets_first_sprite(const AbSheet *sheet);
 
 /* Call once per frame (before drawing): ages the pages for the LRU. */
 void assets_begin_frame(void);
+void assets_preload_sheet(const char *name);   /* load its missing pages now, into free budget only */
 /* Textures are gone (new GL view): reload on next use. */
 void assets_gl_lost(void);
 void assets_set_texture_budget(uint32_t bytes);

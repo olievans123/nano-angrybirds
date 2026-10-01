@@ -48,6 +48,9 @@ typedef struct {
 #define NWORST 4
 typedef struct { uint32_t frame, at_ms, cpu, game, submit, physics, io, upload, script, native, pre, masks, steps; } Worst;
 static Worst sWorst[NWORST];
+/* Frames whose work took over BUSY_US: where their time went, on average. */
+#define BUSY_US 9000u
+static struct { uint32_t n; uint64_t cpu, game, submit, physics, script, native, buffer, draws, quads, state; } sBusy;
 
 uint32_t port_perf_entry_us;
 uint8_t port_fast_redraw;         /* set by the app entry: the resident honours a short heartbeat */
@@ -110,7 +113,7 @@ static void prepare_report(void)
 {
     int n = 0, b, i;
     const Phase *f = &sTotal.phase[0];
-    n = put(n, "AB profile v13; us unless noted; warmup=2s/level\n");
+    n = put(n, "AB profile v14; us unless noted; warmup=2s/level\n");
     n = put(n, "fast_redraw=%u pace=%u gap_short=%u gap_long=%u\n", (unsigned)port_fast_redraw, (unsigned)sPaceUs,
             (unsigned)sGapShort, (unsigned)sGapLong);
     n = put(n, "frames=%u elapsed=%u fps10=%u worst=%u gap_estimate=%u\n", (unsigned)sTotal.frames,
@@ -137,6 +140,10 @@ static void prepare_report(void)
             (unsigned)game_stat_lua_failures, (unsigned)game_stat_lua_recoveries,
             (unsigned)(gfx_stat_tex_bytes / 1024u), gfx_stat_textures, (unsigned)sTotal.alloc_failures,
             (unsigned)sTotal.masks);
+    n = put(n, "busy(>%ums, no io): n=%u cpu=%u game=%u physics=%u script=%u native=%u submit=%u buffer=%u draws=%u quads=%u "
+               "state=%u\n", BUSY_US / 1000u, (unsigned)sBusy.n, avg(sBusy.cpu, sBusy.n), avg(sBusy.game, sBusy.n),
+            avg(sBusy.physics, sBusy.n), avg(sBusy.script, sBusy.n), avg(sBusy.native, sBusy.n), avg(sBusy.submit, sBusy.n),
+            avg(sBusy.buffer, sBusy.n), avg(sBusy.draws, sBusy.n), avg(sBusy.quads, sBusy.n), avg(sBusy.state, sBusy.n));
     for (i = 0; i < NWORST && sWorst[i].cpu; i++) {
         const Worst *w = &sWorst[i];
         n = put(n, "worst%d: frame=%u at_ms=%u cpu=%u game=%u submit=%u physics=%u io=%u upload=%u script=%u native=%u "
@@ -211,6 +218,12 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
         sTotal.gap_hist[bin(gap, 32)]++;
         sTotal.cpu_hist[bin(cpu, 42)]++;
         if (cpu > sTotal.cpu_worst) sTotal.cpu_worst = cpu;
+    }
+    if (cpu > BUSY_US && !io) {
+        sBusy.n++; sBusy.cpu += cpu; sBusy.game += game; sBusy.submit += submit; sBusy.physics += physics;
+        sBusy.script += game_prof_us[PROF_SCRIPT]; sBusy.native += game_prof_us[PROF_NATIVE];
+        sBusy.buffer += gfx_stat_buffer_us; sBusy.draws += (uint32_t)gfx_stat_draws;
+        sBusy.quads += (uint32_t)gfx_stat_quads; sBusy.state += (uint32_t)gfx_stat_state_calls;
     }
     if (cpu > sWorst[NWORST - 1].cpu) {
         int k = NWORST - 1;

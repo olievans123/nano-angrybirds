@@ -1029,6 +1029,10 @@ static int l_loadLevel(lua_State *L)
     load_lua_file(file, "loadedObjects");
     /* the previous level's tables are garbage now: collect while nothing is on screen */
     lua_gc(L, LUA_GCCOLLECT, 0);
+    /* The shared in-level sprites (sling, trails, impact puffs, score digits) are otherwise
+     * read from disk at their first use, a dropped frame or two each time. */
+    assets_preload_sheet("INGAME");
+    assets_preload_sheet("FONT_SCORE");
     G.loading = false;
     port_checkpoint("level-ready", file, 0);
     return 0;

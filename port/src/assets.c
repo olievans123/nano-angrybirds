@@ -263,6 +263,23 @@ int assets_sprite_texture(const AbSprite *sprite, int *tex_w, int *tex_h)
     return pg->tex;
 }
 
+/* Load the pages of a sheet that are not in memory yet, so their first use in play does
+ * not cost a file read (about 11 ms each on the nano). Only into free texture budget:
+ * nothing is evicted for it. */
+void assets_preload_sheet(const char *name)
+{
+    AbSheet *sh = assets_find_sheet(name);
+    int p, i, w, h;
+    if (!sh || !sh->sprites) return;
+    for (p = 0; p < sh->npages; p++) {
+        Page *pg = &sh->pages[p];
+        if (pg->tex || pg->failed) continue;
+        if (gfx_stat_tex_bytes + (uint32_t)pg->w * pg->h * 2u > sBudget) return;
+        for (i = 0; i < sh->nsprites; i++)
+            if (sh->sprites[i].page == p) { assets_sprite_texture(&sh->sprites[i], &w, &h); break; }
+    }
+}
+
 void assets_page_size(const AbSprite *sprite, int *tex_w, int *tex_h)
 {
     const Page *pg = &sprite->sheet->pages[sprite->page];
