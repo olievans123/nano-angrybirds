@@ -1319,6 +1319,7 @@ int game_init(float logical_w, float logical_h)
 
 void game_frame(float dt, const PlatTouches *touches)
 {
+    game_stat_mask_builds = 0;
 #ifdef AB_NANO
     game_stat_physics_us = 0;
 #endif

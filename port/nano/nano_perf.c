@@ -1,5 +1,6 @@
 /* Device frame-cadence measurement. The small HUD uses one 64x16 texture.
- * Stats stay in RAM; one report is written after 30 seconds of a loaded level. */
+ * Stats stay in RAM; a compact report is saved at the start of the callback after
+ * measurement, before any new GL work. No file writes during draw submission. */
 #include <stdio.h>
 #include <string.h>
 #include "nano_perf.h"
@@ -9,13 +10,14 @@
 typedef struct {
     uint64_t interval, cpu, game, submit, physics, io, upload;
     uint32_t frames, worst, slow33, slow50, histogram[201];
+    uint32_t masks;
 } Samples;
 static Samples sTotal;
 static uint64_t sWindowUs, sWarmupUs;
 static uint32_t sWindowFrames, sFps10;
-static int sActive, sSaved, sFont;
+static int sActive, sSaved, sFont, sReportBytes;
 static uint16_t sPixels[64 * 16];
-static char sReport[2048];
+static char sReport[512];
 
 void port_perf_level_loaded(void)
 {
@@ -30,7 +32,7 @@ static unsigned average(uint64_t sum)
     return sTotal.frames ? (unsigned)(sum / sTotal.frames) : 0;
 }
 
-static void save_report(void)
+static void prepare_report(void)
 {
     unsigned target = (sTotal.frames * 95u + 99u) / 100u, seen = 0, p95 = 0;
     for (; p95 < 200; p95++) {
@@ -38,27 +40,29 @@ static void save_report(void)
         if (seen >= target) break;
     }
     int n = snprintf(sReport, sizeof(sReport),
-        "Angry Birds on-device frame profile\n"
-        "Window: first 30 seconds after a 2-second level warmup\n"
-        "FPS measures callback intervals, including OS/presentation time.\n"
-        "The displayed counter adds two small draw batches.\n"
-        "frames=%u elapsed_us=%u fps_tenths=%u\n"
-        "frame_avg_us=%u frame_p95_ms=%u frame_worst_us=%u\n"
-        "frames_over_33ms=%u frames_over_50ms=%u\n"
-        "cpu_avg_us=%u game_avg_us=%u submit_avg_us=%u\n"
-        "physics_avg_us=%u io_avg_us=%u upload_avg_us=%u\n"
-        "Physics, IO and texture-upload times are subsets of game time.\n"
-        "p95 uses 1ms bins, capped at 200ms; worst is uncapped.\n"
-        "draws_last=%d quads_last=%d textures=%d texture_bytes=%u\n",
+        "AB profile v2; times us except p95_ms; 30s after 2s warmup\n"
+        "frames=%u elapsed=%u fps10=%u\n"
+        "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
+        "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
+        "mask_builds=%u draws=%d quads=%d textures=%d tex_KiB=%u\n",
         (unsigned)sTotal.frames, (unsigned)sTotal.interval,
         (unsigned)(10000000ull * sTotal.frames / sTotal.interval),
         average(sTotal.interval), p95, (unsigned)sTotal.worst,
         (unsigned)sTotal.slow33, (unsigned)sTotal.slow50,
         average(sTotal.cpu), average(sTotal.game), average(sTotal.submit),
         average(sTotal.physics), average(sTotal.io), average(sTotal.upload),
-        gfx_stat_draws, gfx_stat_quads, gfx_stat_textures, (unsigned)gfx_stat_tex_bytes);
+        (unsigned)sTotal.masks, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures,
+        (unsigned)(gfx_stat_tex_bytes / 1024u));
     if (n > 0 && (unsigned)n < sizeof(sReport))
-        plat_write_file("perf.txt", sReport, (uint32_t)n);
+        sReportBytes = n;
+}
+
+void port_perf_flush(void)
+{
+    if (!sReportBytes) return;
+    int bytes = sReportBytes;
+    sReportBytes = 0; /* never retry repeatedly on an I/O failure */
+    plat_write_file("perf.txt", sReport, (uint32_t)bytes);
 }
 
 void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
@@ -85,6 +89,7 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     sTotal.physics += physics;
     sTotal.io += io;
     sTotal.upload += upload;
+    sTotal.masks += game_stat_mask_builds;
     if (interval > sTotal.worst) sTotal.worst = interval;
     sTotal.slow33 += interval > 33334u;
     sTotal.slow50 += interval > 50000u;
@@ -92,9 +97,9 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     if (bin > 200) bin = 200;
     sTotal.histogram[bin]++;
     if (sTotal.interval >= 30000000) {
-        sSaved = 1;  /* one write, outside the measured window; never retry per frame */
+        sSaved = 1;
         sActive = 0;
-        save_report();
+        prepare_report();
     }
 }
 

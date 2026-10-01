@@ -134,6 +134,7 @@ int plat_write_file(const char *path, const void *data, uint32_t size) {
     if (size > UINT32_MAX - 4095u) return -1;
     void *aligned = memalign(64, (size + 4095u) & ~4095u);
     if (!aligned) return -1;
+    memset(aligned, 0, (size + 4095u) & ~4095u);
     memcpy(aligned, data, size);
     snprintf(full, sizeof full, AB_DIR "/%s", path);
     hb_fs_mkdir("/Apps/Data");
@@ -271,6 +272,7 @@ void ab_nano_frame(int w, int h, uint32_t frame) {
     }
     {
         PlatTouches t;
+        port_perf_flush();
         uint64_t now = plat_time_us(), t0, game_start, game_end, finish;
         uint32_t interval = last ? (uint32_t)(now - last) : 0;
         float dt = last ? (float)(now - last) * 1e-6f : 1.f / 60.f;

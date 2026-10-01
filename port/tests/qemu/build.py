@@ -9,13 +9,16 @@ import json
 sdk = Path(sys.argv[1]).resolve()
 heap_mib = int(sys.argv[2]) if len(sys.argv) > 2 else 16
 data_dir = sys.argv[3] if len(sys.argv) > 3 else 'build/data-small-pages'
+event_file = sys.argv[4] if len(sys.argv) > 4 else 'tests/level1.txt'
+frames = int(sys.argv[5]) if len(sys.argv) > 5 else 2300
+jitter = len(sys.argv) > 6 and sys.argv[6] == 'jitter'
 if not 4 <= heap_mib <= 32:
     raise SystemExit('test heap must be between 4 and 32 MiB')
 port = Path(__file__).resolve().parents[2]
 build = port / 'build/qemu'
 build.mkdir(parents=True, exist_ok=True)
 events = []
-for line in (port / 'tests/level1.txt').read_text().splitlines():
+for line in (port / event_file).read_text().splitlines():
     fields = line.split()
     if fields[1] == 'shot':
         continue
@@ -35,12 +38,15 @@ for ret, name, args in re.findall(r'\b(void|GLenum)\s+(gl\w+)\s*\(([^)]*)\)\s*;'
         body = 'draw_started = 1;'
     elif name in ('glTexImage2D', 'glBufferData'):
         body = 'if(draw_started) { puts("GPU contract violation: upload after draw"); abort(); }'
+        if name == 'glTexImage2D':
+            body += 'if(width>256 || height>256 || width*height>32768 || width>4*height || height>4*width) { puts("GPU contract violation: oversized texture"); abort(); }'
     if name in ('glGenBuffers', 'glGenTextures'):
         pointer = args.split(',')[-1].strip().split()[-1].lstrip('*')
         body = 'static GLuint id; for(int i=0;i<n;i++) %s[i]=++id;' % pointer
     stubs.append('%s %s(%s) {%s}\n' % (ret, name, args, body))
 (build / 'gl.c').write_text(''.join(stubs))
 flags = ['-marm', '-mcpu=cortex-a5', '-mfloat-abi=softfp', '-mfpu=vfpv3-d16',
+         '-DTEST_FRAMES=%d' % frames, '-DTEST_JITTER=%d' % jitter,
          '-DTEST_HEAP_BYTES=%d' % (heap_mib * 1024 * 1024),
          '-DTEST_DATA_DIR=' + json.dumps(data_dir),
          '-mword-relocations', '-fno-builtin', '-ffunction-sections', '-fdata-sections',

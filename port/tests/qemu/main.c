@@ -97,8 +97,10 @@ int main(void) {
     if (game_init(576, 320)) return 2;
     printf("arena %u bytes\n", port_arena_size());
     PlatTouches touch = {0};
-    for (int frame = 0; frame < 2300; frame++) {
-        now += 33333;
+    uint32_t masks = 0;
+    for (int frame = 0; frame < TEST_FRAMES; frame++) {
+        uint32_t interval = TEST_JITTER ? (frame & 1 ? 43333 : 23333) : 33333;
+        now += interval;
         for (unsigned i = 0; i < sizeof(events)/sizeof(events[0]); i++) {
             if (events[i].frame == frame) {
                 touch.count = events[i].down;
@@ -106,17 +108,20 @@ int main(void) {
                 touch.pt[0].y = events[i].y;
             }
         }
+        port_perf_flush();
         gfx_begin_frame(240, 432, 576, 320, 1, 0, 0, 0);
-        game_frame(1.f/30.f, &touch);
+        game_frame(TEST_JITTER ? (frame & 1 ? 1.3f : 0.7f) / 30.f : 1.f/30.f, &touch);
+        masks += game_stat_mask_builds;
         port_perf_draw(576, 320);
         gfx_end_frame();
-        port_perf_frame(33333, 0, 0, 0, 0, 0, 0); /* simulated cadence, never a device benchmark */
+        port_perf_frame(interval, 0, 0, 0, 0, 0, 0); /* simulated cadence, never a device benchmark */
         if (frame % 100 == 0) {
             printf("frame %d, Lua %d KiB, texture %u KiB, arena largest %u\n", frame,
                    game_lua_kb(), gfx_stat_tex_bytes/1024, port_arena_largest_free());
-            game_debug_dump("score,levelCompleted,currentBirdName");
+            game_debug_dump("score,levelCompleted,currentBirdName,levelName");
         }
     }
+    printf("completed %d frames; %u mask builds\n", TEST_FRAMES, masks);
     port_log_flush("test");
     return 0;
 }

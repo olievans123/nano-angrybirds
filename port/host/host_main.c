@@ -12,6 +12,7 @@
  *     -i FILE     headless: input script, lines of "<frame> down X Y | move X Y | up | shot NAME"
  *     -o DIR      screenshot directory                            [build/shots]
  *     -f FPS      simulated frame rate (dt = 1/FPS)               [30]
+ *     -j          alternate frame time by +/-30% to test uneven timing
  */
 #define GL_SILENCE_DEPRECATION 1
 #include <stdarg.h>
@@ -32,6 +33,8 @@ static const char *sDataDir = "build/data", *sSaveDir = "build/save", *sShotDir 
 static float sLogW = 576.f, sLogH = 320.f;
 static int sPanelW = 432, sPanelH = 240, sRot;
 static int sFps = 30;
+static int sJitter;
+static uint32_t sReads, sMaskBuilds;
 
 /* ---- platform ---- */
 uint64_t plat_time_us(void)
@@ -51,6 +54,7 @@ void *plat_read_file(const char *path, uint32_t *size, int save)
     f = fopen(full, "rb");
     if (!f)
         return NULL;
+    sReads++;
     fseek(f, 0, SEEK_END);
     n = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -167,6 +171,7 @@ static void run_frame(float dt)
     {
         uint64_t t0 = plat_time_us();
         game_frame(dt, &sTouch);
+        sMaskBuilds += game_stat_mask_builds;
         gfx_end_frame();
         sFrameUs += plat_time_us() - t0;
     }
@@ -306,7 +311,7 @@ static int headless(int frames, int shot_every)
                 snprintf(name, sizeof name, "%s", ev->name);
             }
         }
-        run_frame(1.f / (float)sFps);
+        run_frame((sJitter ? (i & 1 ? 1.3f : 0.7f) : 1.f) / (float)sFps);
         glFinish();
         if (name[0]) screenshot(name);
         if (shot_every && (i % shot_every) == 0) { snprintf(name, sizeof name, "f%05d", i); screenshot(name); }
@@ -316,6 +321,7 @@ static int headless(int frames, int shot_every)
             i, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures, gfx_stat_tex_bytes / 1024u);
     fprintf(stderr, "peaks: %d draws, %d quads, %u KB of texture, Lua heap %d KB (now %d KB); %.0f us/frame on this machine\n",
             sPeakDraws, sPeakQuads, sPeakTex / 1024u, sLuaPeakKb, game_lua_kb(), (double)sFrameUs / (double)(i ? i : 1));
+    fprintf(stderr, "resource work: %u file reads, %u ground atlas builds\n", sReads, sMaskBuilds);
     return 0;
 }
 
@@ -335,6 +341,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-s")) { shot_every = atoi(v); i++; }
         else if (!strcmp(a, "-i")) { load_script(v); i++; }
         else if (!strcmp(a, "-f")) { sFps = atoi(v); i++; }
+        else if (!strcmp(a, "-j")) { sJitter = 1; }
         else if (!strcmp(a, "-x")) { sWinScale = atoi(v); i++; }
         else if (!strcmp(a, "-D")) { sDumpNames = v; i++; }          /* log these script globals ... */
         else if (!strcmp(a, "-De")) { sDumpEvery = atoi(v); i++; }   /* ... every N frames ... */

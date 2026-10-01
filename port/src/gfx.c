@@ -50,6 +50,12 @@ int gfx_tex_create(int w, int h, int fmt, const void *pixels, int linear, int re
     GLuint name = 0;
     GLenum glfmt, type;
     uint32_t bytes = (uint32_t)w * (uint32_t)h * (fmt == GFX_FMT_RGBA8888 ? 4u : 2u);
+#ifdef AB_NANO
+    if (w < 1 || h < 1 || w > 256 || h > 256 || w * h > 32768 || w > h * 4 || h > w * 4) {
+        plat_log("texture %dx%d exceeds device page limits", w, h);
+        return 0;
+    }
+#endif
     if (bytes > sTextureBudget || gfx_stat_tex_bytes > sTextureBudget - bytes) {
         plat_log("texture budget exceeded: %u + %u > %u", gfx_stat_tex_bytes, bytes, sTextureBudget);
         return 0;

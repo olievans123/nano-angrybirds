@@ -286,15 +286,18 @@ static int l_addToTrajectory(lua_State *L)
 
 /* The original draws these with two texture units: the tiling ground texture, anchored to
  * the world, with the block sprite's alpha as a mask. They never move, so the port bakes
- * each one once into a shared atlas and then draws it as an ordinary sprite. */
-#define MASK_ATLAS_W 512
-#define MASK_ATLAS_H 512
+ * each one once into small shared pages and draws it as an ordinary sprite.
+ * Generated textures must obey the same device limits as converted asset pages. */
+#define MASK_ATLAS_W 256
+#define MASK_ATLAS_H 128
+#define MASK_PAGES   8
 #define MAX_MASKS    64
 
-struct MaskRect { int x, y, w, h; };
+struct MaskRect { int x, y, w, h, page; };
 static MaskRect sMasks[MAX_MASKS];
-static int sMaskCount, sMaskTex;
+static int sMaskCount, sMaskTextures[MASK_PAGES];
 static bool sMaskDirty;
+uint32_t game_stat_mask_builds;
 
 void render_object_removed(ObjData *d)
 {
@@ -307,8 +310,10 @@ void render_object_removed(ObjData *d)
 
 static void masks_drop(void)
 {
-    if (sMaskTex) gfx_tex_destroy(sMaskTex);
-    sMaskTex = 0;
+    for (int i = 0; i < MASK_PAGES; i++) {
+        if (sMaskTextures[i]) gfx_tex_destroy(sMaskTextures[i]);
+        sMaskTextures[i] = 0;
+    }
     sMaskCount = 0;
     ObjIter it;
     for (ObjNode *n = obj_first(&it); n; n = obj_next(&it))
@@ -335,14 +340,23 @@ static uint16_t *page_load(PageCache *c, const AbSprite *s)
     return c->px;
 }
 
-/* Build the atlas for every textured static block of the level. */
+static void mask_upload(int page, const uint16_t *pixels)
+{
+    if (assets_make_room(MASK_ATLAS_W * MASK_ATLAS_H * 2u))
+        sMaskTextures[page] = gfx_tex_create(MASK_ATLAS_W, MASK_ATLAS_H,
+                                            GFX_FMT_RGBA4444, pixels, 1, 0);
+}
+
+/* Build the pages for every textured static block of the level. Only one page's
+ * pixels are kept in CPU memory at a time, even for levels with many hills. */
 static void masks_build(void)
 {
+    game_stat_mask_builds++;
     masks_drop();
     sMaskDirty = false;
     uint16_t *atlas = NULL;
     PageCache mask = { "", NULL, 0, 0 }, ground = { "", NULL, 0, 0 };
-    int shelfX = 0, shelfY = 0, shelfH = 0;
+    int shelfX = 0, shelfY = 0, shelfH = 0, page = 0;
     ObjIter it;
     for (ObjNode *n = obj_first(&it); n; n = obj_next(&it)) {
         ObjData *d = &n->d;
@@ -352,21 +366,42 @@ static void masks_build(void)
         const AbSprite *g = assets_first_sprite(d->texture);   /* the ground texture fills its sheet */
         if (!g) continue;
         int w = s->tw, h = s->th;
+        /* Also support assets converted with a larger host page profile. */
+        if (w > MASK_ATLAS_W - 2 || h > MASK_ATLAS_H - 2) {
+            float scaleX = (float)(MASK_ATLAS_W - 2) / w;
+            float scaleY = (float)(MASK_ATLAS_H - 2) / h;
+            float scale = scaleX < scaleY ? scaleX : scaleY;
+            w = (int)(w * scale); h = (int)(h * scale);
+        }
+        if (w < 1 || h < 1 || !g->tw || !g->th) continue;
         if (shelfX + w + 2 > MASK_ATLAS_W) { shelfX = 0; shelfY += shelfH; shelfH = 0; }
-        if (shelfY + h + 2 > MASK_ATLAS_H || w + 2 > MASK_ATLAS_W) continue;   /* no room: drawn untextured */
+        if (shelfY + h + 2 > MASK_ATLAS_H) {
+            if (page + 1 == MASK_PAGES) continue; /* no room: drawn untextured */
+            if (atlas) {
+                mask_upload(page, atlas);
+                memset(atlas, 0, MASK_ATLAS_W * MASK_ATLAS_H * 2u);
+            }
+            page++;
+            shelfX = shelfY = shelfH = 0;
+        }
         uint16_t *mp = page_load(&mask, s), *gp = page_load(&ground, g);
         if (!mp || !gp) continue;
         if (!atlas) {
             atlas = (uint16_t *)calloc((size_t)MASK_ATLAS_W * MASK_ATLAS_H, 2);
             if (!atlas) break;
         }
-        float c = cosf(d->renderAngle), sn = sinf(d->renderAngle);
-        float wx0 = d->renderX * kWorld, wy0 = d->renderY * kWorld;
+        /* Key the bake on the actual static body pose. Interpolated render
+         * coordinates can vary by an ULP even when both snapshots are identical. */
+        const b2Vec2 pos = d->body->GetPosition();
+        const float angle = d->body->GetAngle();
+        float c = cosf(angle), sn = sinf(angle);
+        float wx0 = pos.x * kWorld, wy0 = pos.y * kWorld;
         float gsx = (float)g->tw / (float)g->w, gsy = (float)g->th / (float)g->h;   /* ground texels per world px */
         int ox0 = shelfX + 1, oy0 = shelfY + 1;
         for (int j = 0; j < h; j++) {
             for (int i = 0; i < w; i++) {
-                uint16_t m = mp[(s->ty + j) * mask.w + s->tx + i];
+                int mx = i * s->tw / w, my = j * s->th / h;
+                uint16_t m = mp[(s->ty + my) * mask.w + s->tx + mx];
                 uint32_t a = m & 15u;
                 if (!a) continue;
                 /* texel centre -> sprite-local game pixels -> world pixels */
@@ -389,18 +424,18 @@ static void masks_build(void)
         sMasks[sMaskCount].y = oy0;
         sMasks[sMaskCount].w = w;
         sMasks[sMaskCount].h = h;
+        sMasks[sMaskCount].page = page;
         d->maskSlot = sMaskCount++;
-        d->maskX = d->renderX;
-        d->maskY = d->renderY;
-        d->maskAngle = d->renderAngle;
+        d->maskX = pos.x;
+        d->maskY = pos.y;
+        d->maskAngle = angle;
         shelfX += w + 2;
         if (h + 2 > shelfH) shelfH = h + 2;
     }
     free(mask.px);
     free(ground.px);
     if (atlas) {
-        if (assets_make_room(MASK_ATLAS_W * MASK_ATLAS_H * 2u))
-            sMaskTex = gfx_tex_create(MASK_ATLAS_W, MASK_ATLAS_H, GFX_FMT_RGBA4444, atlas, 1, 0);
+        mask_upload(page, atlas);
         free(atlas);
     }
 }
@@ -443,7 +478,8 @@ static int l_drawGame(lua_State *L)
             render_sprite(e->sprite, e->renderX * kWorld, e->renderY * kWorld, kPivot);
         } else if (nmasked < MAX_MASKS) {
             masked[nmasked++] = e;
-            if (e->maskSlot >= 0 && (e->maskX != e->renderX || e->maskY != e->renderY || e->maskAngle != e->renderAngle))
+            const b2Vec2 pos = e->body->GetPosition();
+            if (e->maskSlot >= 0 && (e->maskX != pos.x || e->maskY != pos.y || e->maskAngle != e->body->GetAngle()))
                 stale = true;                   /* moved (level editor): bake again */
         }
     }
@@ -454,9 +490,9 @@ static int l_drawGame(lua_State *L)
             const AbSprite *s = e->sprite;
             object_xform(e);
             float left = e->renderX * kWorld - (float)s->pivot_x, top = e->renderY * kWorld - (float)s->pivot_y;
-            if (e->maskSlot >= 0 && sMaskTex) {
+            if (e->maskSlot >= 0 && sMaskTextures[sMasks[e->maskSlot].page]) {
                 const MaskRect *r = &sMasks[e->maskSlot];
-                render_quad(sMaskTex, MASK_ATLAS_W, MASK_ATLAS_H, left, top, (float)s->w, (float)s->h,
+                render_quad(sMaskTextures[r->page], MASK_ATLAS_W, MASK_ATLAS_H, left, top, (float)s->w, (float)s->h,
                             (float)r->x, (float)r->y, (float)(r->x + r->w), (float)(r->y + r->h), 0xFFFFFFFFu);
             } else {
                 render_image(s, left, top);

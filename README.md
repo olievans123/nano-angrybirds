@@ -3,8 +3,10 @@
 An engine reimplementation that runs the original game's Lua bytecode and converted
 assets. The Mac harness is playable; the nano app builds and has been installed on
 the existing NanoApps test device. The user confirmed that repacking asset pages to
-256×128 fixed the reboot entering level 1. Normal gameplay still has visible lag;
-an on-device FPS counter and timing recorder are installed to guide optimization.
+256×128 fixed the reboot entering level 1. A later test rebooted during a pig impact
+in level 1-2. A fix for repeated scenery rebuilding and oversized generated textures
+is now installed; hardware confirmation is pending. An on-device FPS counter and
+timing recorder remain enabled to measure the result.
 Audio is currently silent on both platforms.
 
 No game binary or assets are tracked here. The converter expects an existing
@@ -27,12 +29,15 @@ The texture scale is 0.5. The installed test profile caps asset pages at 256×12
 matching the page bounds used by the working Mario Kart renderer. Large sprites
 are reduced further to fit; small sprites keep their original requested scale.
 Display coordinates remain 576×320, rendered onto 432×240 pixels. Larger asset
-pages remain available for host comparisons. Runtime ground-mask atlases still
-use the original 512×512 size and have not been validated on hardware.
+pages remain available for host comparisons. Runtime ground-mask atlases now use
+up to eight 256×128 pages, with only one 64 KiB pixel buffer during construction.
+The nano renderer rejects textures exceeding the device page limits.
 
 The smoke test clears level 1-1, checks a 31,320 score, verifies save reload, and
 repeats with the portrait framebuffer rotation used on the nano. Tests use temporary
-save directories and do not overwrite normal saves.
+save directories and do not overwrite normal saves. It also continues into level
+1-2 (internally `Level57`), throws three birds, verifies pig-impact scoring, and
+checks texture memory and cache rebuild counts with ±30% frame-time jitter.
 
 ## Build the nano app
 
@@ -87,6 +92,9 @@ and on the mini PC under `~/nano-ab/device-backup-20261001/`.
   Graphics are mocked; this cannot verify the GPU or its allocation overhead.
   This run scores 31,270, versus 31,320 in the Mac build, so numerical parity
   remains incomplete.
+- The level 1-2 collision replay passes 4,600 ARM frames with frame-time jitter
+  and a 2 MiB arena: pig-impact score 17,090, five ground atlas builds, 2,458 KiB
+  peak texture data including the FPS HUD. No allocation failures were reported.
 - Rendering now records complete frames so texture uploads precede draw calls,
   following the device-driver workaround already used by the Mario Kart port.
 - Device installation: 123 files copied and read back successfully. Existing Mario
@@ -97,8 +105,8 @@ and on the mini PC under `~/nano-ab/device-backup-20261001/`.
   `~/nano-ab/device-backup-20261001/before-small-pages/`.
 
 On hardware, hold the nano with Home on the right. Home exits the app; relaunching
-starts it fresh. Device frame rate, touch behavior and long-session memory use
-still need hardware confirmation. The engine analysis notes are under `analysis/`;
+starts it fresh. Post-fix device frame rate and long-session stability still need
+hardware confirmation. The engine analysis notes are under `analysis/`;
 they are evidence for the reimplementation, not proof of complete behavioral parity.
 
 The ARM regression wrapper can be run on the Linux build host after building the
@@ -121,10 +129,42 @@ to `log.txt`, including OS free memory and the arena's largest free block. Recon
 after a failure without relaunching the app, so startup does not overwrite the log.
 Normal launches do not write these checkpoints.
 
+## Level 1-2 cache fix and device measurements
+
+The pre-fix device report measured 179 callbacks in 30.073 seconds: about 5.9 FPS,
+with 152.7 ms average callback work. Physics averaged 0.3 ms; game work averaged
+119.8 ms, including 19.5 ms of file IO and 4.6 ms of texture uploads. The report's
+tail was zero-filled from byte 512, so its missing fields are not usable evidence.
+
+A host reproduction identified a cache bug: interpolation can change a stationary
+object's render coordinates by a floating-point rounding unit. The renderer treated
+each change as movement and rebuilt the ground atlas. By frame 2,800, uneven timing
+caused 566 atlas builds and 2,902 reads, versus one build and 77 reads with steady
+timing. The cache now uses the static body's actual pose. The longer 4,600-frame
+host regression, including three shots, needs five builds and 97 reads. Its peak
+texture data is 2,456 KiB. These are work counts, not device FPS predictions.
+
+Generated ground textures now follow the small-page limits already used for assets;
+the old 512×512 runtime upload is gone. This addresses a known driver risk, but a
+real-device level 1-2 replay is still needed to confirm the reported reboot is fixed.
+
+To run the matching ARM regression after building the library:
+
+```sh
+cd port
+python3 tests/qemu/build.py /path/to/NanoApps 8 build/data-small-pages tests/level2.txt 4600 jitter
+qemu-arm -cpu cortex-a7 build/qemu/abtest
+```
+
 The profiling build displays FPS in the lower-right corner. This uses the interval
 between device frame callbacks, including time spent outside the game callback;
 it is not the reciprocal of CPU work time. After a two-second level warmup it
-collects 30 seconds in RAM, then writes `perf.txt` once. The report includes mean
+collects 30 seconds in RAM, then writes `perf.txt` once at the start of the next
+callback, before new GL work. The compact v2 report fits within 512 bytes and includes mean
 FPS, frame-time percentiles, slow-frame counts, game/physics/draw/IO/upload timings.
+`fps10` is FPS multiplied by ten; times are microseconds except `p95_ms`, whose
+histogram is capped at 200 ms. Physics, IO and upload times are subsets of game
+time. `mask_builds` counts scenery rebuilds during the measured window; the
+draw, quad and texture fields describe its final frame.
 The HUD adds one small texture and two draw batches. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.

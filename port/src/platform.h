@@ -48,6 +48,7 @@ void game_gl_lost(void);                                           /* GL objects
 uint32_t game_bg_color(void);                                      /* 0xRRGGBB to clear with */
 int  game_wants_exit(void);
 int  game_lua_kb(void);
+extern uint32_t game_stat_mask_builds;
 void game_debug_dump(const char *names);                           /* test hook: log script globals */
 
 #ifdef __cplusplus
