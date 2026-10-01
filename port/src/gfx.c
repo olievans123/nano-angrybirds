@@ -16,6 +16,7 @@ extern void port_crumb(const char *, uint32_t, uint32_t);
 #define MAX_VERTS 1536        /* 256 quads per batch */
 #define FRAME_VERTS 4096
 #define FRAME_BATCHES 256
+#define MERGE_LOOKBACK 8
 
 typedef struct { float x, y, u, v; uint32_t c; } Vert;
 
@@ -27,6 +28,7 @@ typedef struct {
     GLuint texture;
     int first, count, blend, clip_on;
     float clip[4];
+    float bounds[4]; /* min x/y, max x/y in logical pixels */
 } Batch;
 static Vert sFrameVerts[FRAME_VERTS];
 static Batch sBatches[FRAME_BATCHES];
@@ -39,10 +41,15 @@ static float sClip[4];
 static int sPanelW, sPanelH, sRot;
 static float sLogW, sLogH;
 static int sDraws, sQuads;
+static float sPixelArea, sPixelX, sPixelY;
+static int sMovedVerts, sDrawTextured, sDrawClipOn;
+static GLuint sDrawTexture;
+static float sDrawClip[4];
 
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 uint32_t gfx_stat_tex_bytes;
 uint32_t gfx_stat_upload_us;
+int gfx_stat_merges, gfx_stat_state_calls;
 
 int gfx_tex_create(int w, int h, int fmt, const void *pixels, int linear, int repeat)
 {
@@ -142,8 +149,14 @@ void gfx_forget_all(void)
 
 static void apply_clip(void)
 {
+    if (sDrawClipOn == sClipOn && (!sClipOn || !memcmp(sDrawClip, sClip, sizeof(sClip))))
+        return;
+    int changed = sDrawClipOn != sClipOn;
+    sDrawClipOn = sClipOn;
+    memcpy(sDrawClip, sClip, sizeof(sClip));
     if (!sClipOn) {
         glDisable(GL_SCISSOR_TEST);
+        gfx_stat_state_calls++;
         return;
     }
     {
@@ -152,11 +165,12 @@ static void apply_clip(void)
         float sy = (float)(sRot ? sPanelW : sPanelH) / sLogH;
         int x0 = (int)(sClip[0] * sx), y0 = (int)(sClip[1] * sy);
         int x1 = (int)((sClip[0] + sClip[2]) * sx + 0.999f), y1 = (int)((sClip[1] + sClip[3]) * sy + 0.999f);
-        glEnable(GL_SCISSOR_TEST);
+        if (changed) { glEnable(GL_SCISSOR_TEST); gfx_stat_state_calls++; }
         if (sRot)   /* logical x runs down the panel, logical y right to left */
             glScissor(sPanelW - y1, sPanelH - x1, y1 - y0, x1 - x0);
         else
             glScissor(x0, sPanelH - y1, x1 - x0, y1 - y0);
+        gfx_stat_state_calls++;
     }
 }
 
@@ -165,11 +179,18 @@ void gfx_begin_frame(int panel_w, int panel_h, float logical_w, float logical_h,
 {
     sPanelW = panel_w; sPanelH = panel_h; sRot = rot90;
     sLogW = logical_w; sLogH = logical_h;
+    sPixelArea = (float)panel_w * panel_h / (logical_w * logical_h);
+    sPixelX = logical_w / (float)(rot90 ? panel_h : panel_w);
+    sPixelY = logical_h / (float)(rot90 ? panel_w : panel_h);
     sDraws = sQuads = 0;
     sCount = 0;
     sFrameCount = sBatchCount = sOverflow = 0;
     sUploads = 0;
     gfx_stat_upload_us = 0;
+    gfx_stat_merges = gfx_stat_state_calls = sMovedVerts = 0;
+    sDrawTextured = -1;
+    sDrawTexture = 0;
+    sDrawClipOn = 0; /* glDisable below establishes the actual state */
     sCurTex = -1;
     sBlend = -1;
     sWantBlend = GFX_BLEND_ALPHA;
@@ -205,19 +226,66 @@ void gfx_flush(void)
 {
     if (!sCount)
         return;
-    if (sBatchCount == FRAME_BATCHES || sFrameCount + sCount > FRAME_VERTS) {
+    if (sFrameCount + sCount > FRAME_VERTS) {
         if (!sOverflow) plat_log("renderer: frame capacity exceeded");
         sOverflow = 1;
         sCount = 0;
         return;
     }
-    Batch *batch = &sBatches[sBatchCount++];
-    batch->texture = sCurTex > 0 ? sTex[sCurTex].gl : 0;
-    batch->first = sFrameCount;
-    batch->count = sCount;
-    batch->blend = sWantBlend;
-    batch->clip_on = sClipOn;
-    memcpy(batch->clip, sClip, sizeof(sClip));
+    Batch current;
+    current.texture = sCurTex > 0 ? sTex[sCurTex].gl : 0;
+    current.first = sFrameCount;
+    current.count = sCount;
+    current.blend = sWantBlend;
+    current.clip_on = sClipOn;
+    memcpy(current.clip, sClip, sizeof(sClip));
+    current.bounds[0] = current.bounds[1] = 1e30f;
+    current.bounds[2] = current.bounds[3] = -1e30f;
+    for (int v = 0; v < sCount; v++) {
+        float x = sVerts[v].x, y = sVerts[v].y;
+        if (!(x >= -1e20f && x <= 1e20f && y >= -1e20f && y <= 1e20f)) {
+            current.bounds[0] = current.bounds[1] = -1e30f;
+            current.bounds[2] = current.bounds[3] = 1e30f;
+            break; /* invalid coordinates must never permit reordering */
+        }
+        if (x < current.bounds[0]) current.bounds[0] = x;
+        if (y < current.bounds[1]) current.bounds[1] = y;
+        if (x > current.bounds[2]) current.bounds[2] = x;
+        if (y > current.bounds[3]) current.bounds[3] = y;
+    }
+    /* Move this draw next to an earlier compatible one only if it cannot touch
+     * any intervening draw. Include a physical-pixel margin for rasterization.
+     * Limit both lookback and copying; no scratch allocation or texture growth. */
+    for (int i = sBatchCount - 1; i >= 0 && i >= sBatchCount - MERGE_LOOKBACK; i--) {
+        Batch *prior = &sBatches[i];
+        if (prior->texture == current.texture && prior->blend == current.blend &&
+            prior->clip_on == current.clip_on && (!current.clip_on || !memcmp(prior->clip, current.clip, sizeof(sClip)))) {
+            if (prior->count + sCount > MAX_VERTS) break;
+            int end = prior->first + prior->count, move = sFrameCount - end;
+            if (sMovedVerts + move > FRAME_VERTS) break;
+            memmove(sFrameVerts + end + sCount, sFrameVerts + end, (size_t)move * sizeof(Vert));
+            memcpy(sFrameVerts + end, sVerts, (size_t)sCount * sizeof(Vert));
+            for (int j = i + 1; j < sBatchCount; j++) sBatches[j].first += sCount;
+            prior->count += sCount;
+            for (int j = 0; j < 2; j++) {
+                if (current.bounds[j] < prior->bounds[j]) prior->bounds[j] = current.bounds[j];
+                if (current.bounds[j + 2] > prior->bounds[j + 2]) prior->bounds[j + 2] = current.bounds[j + 2];
+            }
+            sFrameCount += sCount;
+            sMovedVerts += move;
+            sCount = 0;
+            gfx_stat_merges++;
+            return;
+        }
+        if (!(current.bounds[2] + sPixelX < prior->bounds[0] || prior->bounds[2] + sPixelX < current.bounds[0] ||
+              current.bounds[3] + sPixelY < prior->bounds[1] || prior->bounds[3] + sPixelY < current.bounds[1]))
+            break;
+    }
+    if (sBatchCount == FRAME_BATCHES) {
+        if (!sOverflow) plat_log("renderer: frame capacity exceeded");
+        sOverflow = 1; sCount = 0; return;
+    }
+    sBatches[sBatchCount++] = current;
     memcpy(sFrameVerts + sFrameCount, sVerts, sCount * sizeof(Vert));
     sFrameCount += sCount;
     sCount = 0;
@@ -229,23 +297,33 @@ static void draw_batch(const Batch *batch)
         sBlend = batch->blend;
         if (sBlend == GFX_BLEND_NONE) {
             glDisable(GL_BLEND);
+            gfx_stat_state_calls++;
         } else {
             glEnable(GL_BLEND);
             /* the game's images (and the colours passed in) are premultiplied */
             glBlendFunc(GL_ONE, sBlend == GFX_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+            gfx_stat_state_calls += 2;
         }
     }
     sClipOn = batch->clip_on;
     memcpy(sClip, batch->clip, sizeof(sClip));
     apply_clip();
-    if (batch->texture) {
+    int textured = batch->texture != 0;
+    if (textured && sDrawTexture != batch->texture) {
         glBindTexture(GL_TEXTURE_2D, batch->texture);
-        glEnable(GL_TEXTURE_2D);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, u));
-    } else {
-        glDisable(GL_TEXTURE_2D);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        sDrawTexture = batch->texture;
+        gfx_stat_state_calls++;
+    }
+    if (textured != sDrawTextured) {
+        sDrawTextured = textured;
+        if (textured) {
+            glEnable(GL_TEXTURE_2D);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        } else {
+            glDisable(GL_TEXTURE_2D);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        }
+        gfx_stat_state_calls += 2;
     }
     glDrawArrays(GL_TRIANGLES, batch->first, batch->count);
     sDraws++;
@@ -264,6 +342,8 @@ void gfx_end_frame(void)
             glBufferData(GL_ARRAY_BUFFER, sFrameCount * (GLsizeiptr)sizeof(Vert), sFrameVerts, GL_DYNAMIC_DRAW);
             glVertexPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, x));
             glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Vert), (const void *)offsetof(Vert, c));
+            glTexCoordPointer(2, GL_FLOAT, sizeof(Vert), (const void *)offsetof(Vert, u));
+            gfx_stat_state_calls++; /* texture coordinates share one VBO throughout the frame */
             for (int i = 0; i < sBatchCount; i++) draw_batch(&sBatches[i]);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         } else {
@@ -317,8 +397,7 @@ static uint32_t pack(uint32_t argb)
 static int degenerate(const float *a, const float *b, const float *c)
 {
     float area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
-    float pixels = (float)sPanelW * (float)sPanelH / (sLogW * sLogH);
-    area *= pixels;
+    area *= sPixelArea;
     return !(area < -0.25f || area > 0.25f); /* also reject NaNs; same 1/8-pixel guard as MK64 */
 }
 

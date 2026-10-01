@@ -8,6 +8,7 @@
 #include "../src/gfx.h"
 
 int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
+int gfx_stat_merges, gfx_stat_state_calls;
 uint32_t gfx_stat_tex_bytes;
 uint32_t game_stat_mask_builds;
 static char report[4096];
@@ -26,6 +27,7 @@ void gfx_quad(int tex, int w, int h, const float xy[8], const float uv[8], uint3
 int main(int argc, char **argv) {
     int jitter = argc > 1 && !strcmp(argv[1], "jitter");
     int transitions = argc > 1 && !strcmp(argv[1], "transitions");
+    gfx_stat_draws = 12; gfx_stat_merges = 7; gfx_stat_state_calls = 22;
     port_perf_level_loaded();
     /* Short levels must not discard previous measurements. Simulate 3-second
      * measured segments separated by the 2-second load warmup. */
@@ -62,6 +64,7 @@ int main(int argc, char **argv) {
     assert(strstr(report, "frames=600 elapsed=30000000 fps10=200\n"));
     assert(strstr(report, "cpu=6000 game=3000 submit=2000"));
     assert(strstr(report, "alloc_avg=10 probes_avg=50 copy_B_avg=8 alloc_failures=0"));
+    assert(strstr(report, "draw_avg=12 merge_avg=7 state_avg=22"));
     assert(strstr(report, jitter ? "p95_ms=84 worst=83333" : "p95_ms=50 worst=50000"));
     assert(strstr(report, jitter ? "slow33=300 slow50=300" : "slow33=600 slow50=0"));
     port_perf_level_loaded();

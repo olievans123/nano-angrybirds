@@ -100,6 +100,7 @@ int main(void) {
     PlatTouches touch = {0};
     uint32_t masks = 0;
     uint64_t allocations = 0, probes = 0, copied = 0, failures = 0;
+    uint64_t draws = 0, merges = 0, state_calls = 0;
     for (int frame = 0; frame < TEST_FRAMES; frame++) {
         uint32_t interval = TEST_JITTER ? (frame & 1 ? 43333 : 23333) : 33333;
         now += interval;
@@ -117,6 +118,7 @@ int main(void) {
         masks += game_stat_mask_builds;
         port_perf_draw(576, 320);
         gfx_end_frame();
+        draws += gfx_stat_draws; merges += gfx_stat_merges; state_calls += gfx_stat_state_calls;
         PortAllocStats ast = port_alloc_stats();
         allocations += ast.allocations; probes += ast.probes; copied += ast.copied;
         failures += ast.failures;
@@ -130,6 +132,8 @@ int main(void) {
         }
     }
     printf("completed %d frames; %u mask builds\n", TEST_FRAMES, masks);
+    printf("render work: %llu draws, %llu merges, %llu batch state calls\n",
+           (unsigned long long)draws, (unsigned long long)merges, (unsigned long long)state_calls);
     printf("allocator totals: %llu allocations, %llu probes, %llu copied bytes, %llu failures\n",
            (unsigned long long)allocations, (unsigned long long)probes,
            (unsigned long long)copied, (unsigned long long)failures);

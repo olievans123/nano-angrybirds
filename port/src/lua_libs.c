@@ -111,6 +111,13 @@ static const luaL_Reg mathlib[] = {
 static int os_time(lua_State *L)
 {
     /* only used to seed the random generator */
+#ifndef AB_NANO
+    const char *seed = getenv("AB_REPLAY_SEED");
+    if (seed) {
+        lua_pushnumber(L, (lua_Number)strtoul(seed, NULL, 10));
+        return 1;
+    }
+#endif
     lua_pushnumber(L, (lua_Number)(uint32_t)((plat_time_us() / 1000u) & 0xFFFFFFu));
     return 1;
 }

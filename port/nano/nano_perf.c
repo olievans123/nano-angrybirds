@@ -13,6 +13,7 @@ typedef struct {
     uint32_t frames, worst, slow33, slow50, histogram[201];
     uint32_t masks;
     uint64_t allocations, probes, copied, alloc_failures;
+    uint64_t draws, merges, state_calls;
 } Samples;
 static Samples sTotal;
 static uint64_t sWindowUs, sWarmupUs;
@@ -43,12 +44,13 @@ static void prepare_report(void)
         if (seen >= target) break;
     }
     int n = snprintf(sReport, sizeof(sReport),
-        "AB profile v3; times us except p95_ms; 2s warmup per level\n"
+        "AB profile v4; times us except p95_ms; 2s warmup per level\n"
         "frames=%u elapsed=%u fps10=%u\n"
         "mean=%u p95_ms=%u worst=%u slow33=%u slow50=%u\n"
         "cpu=%u game=%u submit=%u physics=%u io=%u upload=%u\n"
         "mask_builds=%u draws=%d quads=%d textures=%d tex_KiB=%u\n"
-        "alloc_avg=%u probes_avg=%u copy_B_avg=%u alloc_failures=%u\n",
+        "alloc_avg=%u probes_avg=%u copy_B_avg=%u alloc_failures=%u\n"
+        "draw_avg=%u merge_avg=%u state_avg=%u\n",
         (unsigned)sTotal.frames, (unsigned)sTotal.interval,
         (unsigned)(10000000ull * sTotal.frames / sTotal.interval),
         average(sTotal.interval), p95, (unsigned)sTotal.worst,
@@ -58,7 +60,8 @@ static void prepare_report(void)
         (unsigned)sTotal.masks, gfx_stat_draws, gfx_stat_quads, gfx_stat_textures,
         (unsigned)(gfx_stat_tex_bytes / 1024u),
         average(sTotal.allocations), average(sTotal.probes), average(sTotal.copied),
-        (unsigned)sTotal.alloc_failures);
+        (unsigned)sTotal.alloc_failures, average(sTotal.draws),
+        average(sTotal.merges), average(sTotal.state_calls));
     if (n > 0 && (unsigned)n < sizeof(sReport))
         sReportBytes = n;
 }
@@ -98,6 +101,9 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     sTotal.io += io;
     sTotal.upload += upload;
     sTotal.masks += game_stat_mask_builds;
+    sTotal.draws += gfx_stat_draws;
+    sTotal.merges += gfx_stat_merges;
+    sTotal.state_calls += gfx_stat_state_calls;
     PortAllocStats ast = port_alloc_stats();
     sTotal.allocations += ast.allocations;
     sTotal.probes += ast.probes;

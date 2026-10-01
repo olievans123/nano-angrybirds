@@ -156,6 +156,7 @@ static uint32_t sFrame;
 static uint64_t sFrameUs;
 static int sLuaPeakKb, sPeakDraws, sPeakQuads;
 static uint32_t sPeakTex;
+static uint64_t sTotalDraws, sTotalMerges, sTotalStateCalls;
 static const char *sDumpNames;
 static int sDumpEvery = 1, sDumpFrom;
 
@@ -173,6 +174,9 @@ static void run_frame(float dt)
         game_frame(dt, &sTouch);
         sMaskBuilds += game_stat_mask_builds;
         gfx_end_frame();
+        sTotalDraws += gfx_stat_draws;
+        sTotalMerges += gfx_stat_merges;
+        sTotalStateCalls += gfx_stat_state_calls;
         sFrameUs += plat_time_us() - t0;
     }
     if (game_lua_kb() > sLuaPeakKb) sLuaPeakKb = game_lua_kb();
@@ -322,6 +326,8 @@ static int headless(int frames, int shot_every)
     fprintf(stderr, "peaks: %d draws, %d quads, %u KB of texture, Lua heap %d KB (now %d KB); %.0f us/frame on this machine\n",
             sPeakDraws, sPeakQuads, sPeakTex / 1024u, sLuaPeakKb, game_lua_kb(), (double)sFrameUs / (double)(i ? i : 1));
     fprintf(stderr, "resource work: %u file reads, %u ground atlas builds\n", sReads, sMaskBuilds);
+    fprintf(stderr, "render work: %llu draws, %llu merges, %llu batch state calls\n",
+            (unsigned long long)sTotalDraws, (unsigned long long)sTotalMerges, (unsigned long long)sTotalStateCalls);
     return 0;
 }
 

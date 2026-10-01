@@ -44,6 +44,7 @@ void gfx_flush(void);
 extern int gfx_stat_draws, gfx_stat_quads, gfx_stat_textures;
 extern uint32_t gfx_stat_tex_bytes;
 extern uint32_t gfx_stat_upload_us;
+extern int gfx_stat_merges, gfx_stat_state_calls; /* per-frame draw merges and batch-state GL calls */
 
 #ifdef __cplusplus
 }

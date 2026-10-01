@@ -8,6 +8,8 @@ in level 1-2. A fix for repeated scenery rebuilding and oversized generated text
 was confirmed much smoother by the user; its device report averaged 23.7 FPS.
 The latest build also replaces full-heap allocation searches with free lists;
 its latest 30-second device sample averaged 45.9 FPS with zero allocation failures.
+The subsequent renderer update reduces draw calls by 36–38% in fixed-input host
+replays; its device FPS improvement has not yet been measured.
 The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
@@ -56,7 +58,7 @@ make -C /path/to/NanoApps/apps/angrybirds AB_DIR=/absolute/path/to/port -j4
 
 The engine build rejects static constructors; the application build checks Thumb
 code for unsupported floating-point instructions and validates relocations.
-The profiling app is about 254 KiB on disk and uses a separate allocation arena plus up to
+The profiling app is about 256 KiB on disk and uses a separate allocation arena plus up to
 3 MiB of texture pixel data. Driver overhead is additional.
 
 ## Prepare an installation
@@ -171,12 +173,15 @@ saves an initial report after five measured seconds, then replaces it once after
 30 measured seconds. Samples survive level changes; each new level adds its own
 two-second warmup. At most two writes occur per launch, at the start of the next
 callback before new GL work. The interval containing the recorder's own disk write
-is excluded from the measurements. The compact v3 report fits within 512 bytes and includes mean
+is excluded from the measurements. The compact v4 report fits within 512 bytes and includes mean
 FPS, frame-time percentiles, slow-frame counts, game/physics/draw/IO/upload timings.
 `fps10` is FPS multiplied by ten; times are microseconds except `p95_ms`, whose
 histogram is capped at 200 ms. Physics, IO and upload times are subsets of game
 time. `mask_builds` counts scenery rebuilds during the measured window; the
 draw, quad and texture fields describe its final frame.
+`draw_avg`, `merge_avg`, and `state_avg` average draw calls, merged batches, and
+batch-state GL calls across the measured window. State calls exclude frame setup,
+texture uploads, and vertex/color pointer setup.
 The HUD adds one small texture and two draw batches. Do not enable `trace.once`
 for a performance measurement, because those diagnostic writes add stalls.
 
@@ -233,3 +238,43 @@ cc -std=c99 -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
   port/tests/allocator_test.c -o port/build/allocator_test
 port/build/allocator_test
 ```
+
+## Renderer optimization
+
+Sprite corners are now transformed once for both culling and drawing. GL texture,
+clipping, and client-array state is reused within a frame, with state caches reset
+on every callback because the resident also uses the GL context.
+
+Compatible batches can be combined across intervening draws only when their bounds
+are disjoint, including a one-physical-pixel margin. Overlapping draw order is
+preserved. Search is limited to eight earlier batches, and vertex copying is capped
+at 4,096 vertices per frame. This adds about 4 KiB of batch bounds; it adds no texture
+pages or heap allocation and retains upload-before-draw ordering and batch limits.
+
+Fixed-seed Mac replays, identical in both display orientations:
+
+| Replay | Draws before merging | Draws after | Reduction |
+| --- | ---: | ---: | ---: |
+| Level 1-1, 2,300 frames | 46,240 | 29,701 | 35.8% |
+| Level 1-2, 4,600 uneven frames | 111,679 | 69,369 | 37.9% |
+
+All 496 sampled screenshots match the previous renderer pixel-for-pixel. The
+OpenGL fixture in `port/tests/renderer_test.c` also matches the previous renderer
+for transparency, overlapping/disjoint draws, clipping, blend changes, merged
+vertex offsets, texture retirement, and resident state changes between callbacks;
+both builds pass AddressSanitizer and UndefinedBehaviorSanitizer. The host smoke
+test checks level completion, scoring, save reload, and level 1-2 impacts.
+
+The ARM replay with the minimum 2 MiB arena completes 4,600 frames, scoring 17,880
+with five mask builds and zero allocation failures. Including the FPS HUD, it
+submits 75,121 draws and combines 45,483 batches. These are workload counts with
+mocked graphics, not a device benchmark. The last measured hardware result is
+still 45.9 FPS from the allocator build.
+
+To compare two host builds that contain the `AB_REPLAY_SEED` test hook:
+
+```sh
+.venv/bin/python tools/compare_render.py /path/to/reference/abhost
+```
+
+The hook only controls the host's Lua random seed; it is excluded from nano builds.

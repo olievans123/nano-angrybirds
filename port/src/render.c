@@ -36,11 +36,10 @@ void rs_corner(float left, float top, float cx, float cy, float *x, float *y)
     *y = (top + gRS.py + gRS.ty + ox * gRS.m10 + oy * gRS.m11) * gRS.sy;
 }
 
-void render_quad(int tex, int tex_w, int tex_h, float left, float top, float w, float h,
-                 float u0, float v0, float u1, float v1, uint32_t argb)
+static int quad_geometry(float left, float top, float w, float h, float xy[8])
 {
     static const float cornerx[4] = { 0.f, 1.f, 1.f, 0.f }, cornery[4] = { 0.f, 0.f, 1.f, 1.f };
-    float xy[8], uv[8], minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
+    float minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
     int i;
     for (i = 0; i < 4; i++) {
         float x, y;
@@ -51,12 +50,16 @@ void render_quad(int tex, int tex_w, int tex_h, float left, float top, float w, 
         if (x > maxx) maxx = x;
         if (y < miny) miny = y;
         if (y > maxy) maxy = y;
-        uv[i * 2] = cornerx[i] ? u1 : u0;
-        uv[i * 2 + 1] = cornery[i] ? v1 : v0;
     }
     /* the original's cull test, which also rejects NaN coordinates */
-    if (!(maxx >= 0.f && maxy >= 0.f && minx < gScreenW && miny < gScreenH))
-        return;
+    return maxx >= 0.f && maxy >= 0.f && minx < gScreenW && miny < gScreenH;
+}
+
+void render_quad(int tex, int tex_w, int tex_h, float left, float top, float w, float h,
+                 float u0, float v0, float u1, float v1, uint32_t argb)
+{
+    float xy[8], uv[8] = {u0, v0, u1, v0, u1, v1, u0, v1};
+    if (!quad_geometry(left, top, w, h, xy)) return;
     gfx_quad(tex, tex_w, tex_h, xy, uv, argb);
 }
 
@@ -64,25 +67,16 @@ void render_image_part(const AbSprite *s, float left, float top, float sx, float
 {
     float fu = (float)s->tw / (float)s->w, fv = (float)s->th / (float)s->h;   /* texels per game pixel */
     int tw, th, tex;
+    float xy[8];
     /* cull before touching the texture, so sprites off screen never load a page */
-    {
-        float x, y, minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
-        int i;
-        for (i = 0; i < 4; i++) {
-            rs_corner(left, top, (i == 1 || i == 2) ? sw : 0.f, i >= 2 ? sh : 0.f, &x, &y);
-            if (x < minx) minx = x;
-            if (x > maxx) maxx = x;
-            if (y < miny) miny = y;
-            if (y > maxy) maxy = y;
-        }
-        if (!(maxx >= 0.f && maxy >= 0.f && minx < gScreenW && miny < gScreenH))
-            return;
-    }
+    if (!quad_geometry(left, top, sw, sh, xy)) return;
     tex = assets_sprite_texture(s, &tw, &th);
-    if (tex)
-        render_quad(tex, tw, th, left, top, sw, sh,
-                    (float)s->tx + sx * fu, (float)s->ty + sy * fv,
-                    (float)s->tx + (sx + sw) * fu, (float)s->ty + (sy + sh) * fv, 0xFFFFFFFFu);
+    if (tex) {
+        float u0 = (float)s->tx + sx * fu, v0 = (float)s->ty + sy * fv;
+        float u1 = (float)s->tx + (sx + sw) * fu, v1 = (float)s->ty + (sy + sh) * fv;
+        float uv[8] = {u0, v0, u1, v0, u1, v1, u0, v1};
+        gfx_quad(tex, tw, th, xy, uv, 0xFFFFFFFFu);
+    }
 }
 
 void render_image(const AbSprite *s, float left, float top)
