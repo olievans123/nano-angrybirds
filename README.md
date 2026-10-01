@@ -12,7 +12,8 @@ The subsequent renderer update reduces draw calls by 36–38% in fixed-input hos
 replays. Its first 30-second device sample averaged 46.9 FPS, with draw submission
 averaging 2.49 ms versus 3.49 ms before; the playthroughs used different inputs.
 The next build adds faster bulk memory operations and more detailed cadence
-measurement; its device result is pending.
+measurement. Its first 30-second sample averaged 48.9 FPS; 59.1% of measured
+callback intervals were at or below 16.667 ms. A steady 60 FPS remains unverified.
 The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
@@ -336,8 +337,31 @@ cc -std=c99 -O2 port/tests/perf_test.c port/nano/nano_perf.c -o port/build/perf_
 port/build/perf_test sixty
 ```
 
-The new build has not yet been measured on hardware. The latest measured result
-remains 46.9 FPS. The GL surface app interface exposes a frame callback, without
-an app-selectable callback interval. The directly measured gap in v5 will help
-distinguish time between callbacks from the game work we can optimize; no 60 FPS
-claim is made from host timing or the simulated ARM cadence.
+The first v5 device sample recorded 1,468 callbacks in 30.007 seconds:
+
+| Device measurement | Renderer build (v4) | Memory build (v5) |
+| --- | ---: | ---: |
+| Reported average FPS | 46.9 | 48.9 |
+| Mean callback interval | 21.29 ms | 20.44 ms |
+| 95th-percentile interval | 35 ms | 34 ms |
+| Frames exceeding 33.334 ms | 138/1,410 (9.79%) | 53/1,468 (3.61%) |
+| Frames exceeding 50 ms | 3/1,410 | 3/1,468 |
+| Worst interval | 67.22 ms | 105.70 ms |
+| Mean app callback work | 6.63 ms | 5.81 ms |
+| Mean draw submission | 2.49 ms | 2.49 ms |
+
+The new report measures a 14.619 ms average gap between platform callbacks, a
+0.122 ms vertex-buffer upload, and a 10.521 ms shortest interval. 867 of 1,468
+intervals (59.1%) fit the 16.667 ms budget. This establishes that some callbacks
+arrive faster than 60 Hz, not that presentation maintains 60 FPS. There were zero
+allocation failures, one mask build, and 2,042 KiB of texture data in the final
+frame. Physics averaged 0.535 ms versus 0.897 ms previously; these are different
+user playthroughs, so neither the FPS gain nor all of the CPU-time reduction can
+be attributed to the memory changes. The larger worst interval also shows that
+occasional stalls remain.
+
+The GL surface app interface exposes a frame callback without an app-selectable
+callback interval. The measured gap includes resident scheduling/presentation
+and unmeasured entry work, but does not identify their individual contributions.
+Uneven callback timing is the next area to investigate for the 60 FPS target;
+there is no evidence here of a fixed 49 FPS cap.
