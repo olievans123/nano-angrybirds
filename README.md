@@ -7,7 +7,8 @@ the existing NanoApps test device. The user confirmed that repacking asset pages
 in level 1-2. A fix for repeated scenery rebuilding and oversized generated textures
 was confirmed much smoother by the user; its device report averaged 23.7 FPS.
 The latest build also replaces full-heap allocation searches with free lists;
-its hardware performance is not measured yet. The FPS counter and recorder remain enabled.
+its latest 30-second device sample averaged 45.9 FPS with zero allocation failures.
+The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
 No game binary or assets are tracked here. The converter expects an existing
@@ -106,8 +107,8 @@ and on the mini PC under `~/nano-ab/device-backup-20261001/`.
   `~/nano-ab/device-backup-20261001/before-small-pages/`.
 
 On hardware, hold the nano with Home on the right. Home exits the app; relaunching
-starts it fresh. Allocator-update frame rate and long-session stability still need
-hardware confirmation. The engine analysis notes are under `analysis/`;
+starts it fresh. Long-session stability still needs hardware confirmation.
+The engine analysis notes are under `analysis/`;
 they are evidence for the reimplementation, not proof of complete behavioral parity.
 
 The ARM regression wrapper can be run on the Linux build host after building the
@@ -201,9 +202,27 @@ In the same 4,600-frame ARM replay with a 2 MiB arena:
 | Bytes copied by realloc | 10,680 | 8,336 |
 | Final level 1-2 score | 17,880 | 17,880 |
 
-The new run reports zero allocation failures. The 99.8% reduction is in allocator
-search work, not a measured device FPS gain. On-device reports now include average
+The new run reports zero allocation failures. The 99.8% reduction measures allocator
+search work. On-device reports also include average
 allocation/search/copy counts per frame and total allocation failures for the window.
+
+The subsequent v3 hardware report recorded 1,378 callbacks in 30.001 seconds:
+
+| Device measurement | Before allocator change | After |
+| --- | ---: | ---: |
+| Average FPS | 23.7 | 45.9 |
+| Mean callback interval | 42.17 ms | 21.77 ms |
+| 95th-percentile interval | 64 ms | 35 ms |
+| Frames exceeding 50 ms | 199/712 (28.0%) | 7/1,378 (0.5%) |
+| Mean app callback work | 27.03 ms | 6.81 ms |
+| Mean game update | 23.48 ms | 3.13 ms |
+
+These are separate user playthroughs, so the scenes and inputs are not controlled.
+The latest report records zero allocation failures, 210 allocator probes per frame,
+and 2,042 KiB of texture data in its final frame. The worst interval was 140.85 ms;
+occasional stalls remain. About 14.97 ms of the mean interval occurs outside the
+measured app callback, which includes scheduling/presentation overhead but does
+not identify a specific cause. This sample does not establish long-session stability.
 
 The allocator stress test checks alignment, data preservation, failed growth,
 shrinking under memory pressure, free-list consistency and full coalescing after
