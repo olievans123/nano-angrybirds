@@ -17,10 +17,16 @@
 #include "../src/gfx.h"
 #include "../src/platform.h"
 
-#define FREE_US     5000000u      /* free-running part */
+#define FREE_US     (PACE_SWEEP ? 5000000u : 10000000u)   /* free-running part */
 #define PHASE_US    3000000u      /* per spacing */
 #define SLOW_US     24000u        /* an interval this long skipped a refresh */
 #define SEQ_FRAMES  120
+/* The spacing sweep made things worse at every setting on the test device (the long gaps
+ * come from the platform's redraw heartbeat, not from finishing early), so it is off: the
+ * report covers the free-running part only and frames are not held back. */
+#ifndef PACE_SWEEP
+#define PACE_SWEEP  0
+#endif
 
 static const uint16_t kTargets[] = { 14000, 15000, 16000, 16500, 16700, 17000, 17500, 18000, 19000, 20000 };
 #define NTARGETS ((int)(sizeof(kTargets) / sizeof(kTargets[0])))
@@ -197,7 +203,7 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
             prepare_report();
         }
         sPhaseStart = sTotal.elapsed;
-        if (++sPhase > NTARGETS) {
+        if (++sPhase > (PACE_SWEEP ? NTARGETS : 0)) {
             /* sweep finished: keep the spacing with the best score */
             uint32_t best = 0xFFFFFFFFu;
             for (int i = 0; i <= NTARGETS; i++) {
@@ -205,10 +211,11 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
                 if (sc < best) { best = sc; sBest = i; }
             }
             sPaceUs = sBest > 0 ? kTargets[sBest - 1] : 0;
+            if (!PACE_SWEEP) sBest = -1;
             sSaved = 1;
             sActive = 0;
             prepare_report();
-        } else {
+        } else if (PACE_SWEEP) {
             sPaceUs = kTargets[sPhase - 1];
         }
     }
