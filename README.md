@@ -6,8 +6,8 @@ the existing NanoApps test device. The user confirmed that repacking asset pages
 256×128 fixed the reboot entering level 1. A later test rebooted during a pig impact
 in level 1-2. A fix for repeated scenery rebuilding and oversized generated textures
 was confirmed much smoother by the user; its device report averaged 23.7 FPS.
-The latest build also replaces full-heap allocation searches with free lists;
-its latest 30-second device sample averaged 45.9 FPS with zero allocation failures.
+The allocator update replaces full-heap allocation searches with free lists;
+its first 30-second device sample averaged 45.9 FPS with zero allocation failures.
 The subsequent renderer update reduces draw calls by 36–38% in fixed-input host
 replays. Its first 30-second device sample averaged 46.9 FPS, with draw submission
 averaging 2.49 ms versus 3.49 ms before; the playthroughs used different inputs.
@@ -15,7 +15,9 @@ The next build adds faster bulk memory operations and more detailed cadence
 measurement. Its first 30-second sample averaged 48.9 FPS; 59.1% of measured
 callback intervals were at or below 16.667 ms. A steady 60 FPS remains unverified.
 The current build also caches render rotations and separates callback-entry
-overhead from gap timing; its device measurement is pending.
+overhead from gap timing. Its saved five-second checkpoint reports 53.4 FPS;
+a full 30-second sample is still needed for this build. Entry setup averages
+0.004 ms, within a 14.071 ms gap between platform callbacks.
 The FPS counter and recorder remain enabled.
 Audio is currently silent on both platforms.
 
@@ -400,5 +402,31 @@ and adds median/95th-percentile callback-gap timing. It retains the same two
 bounded report writes and excludes their intervals. Unit tests cover varying
 entry costs, alternating gaps, 60 Hz cadence, warmup, transitions, and write-delay
 exclusion. There is no change to callback scheduling; the new measurements help
-identify which part of the previous 14.619 ms gap needs attention. Actual device
-FPS for this build is unmeasured; the latest verified sample remains 48.9 FPS.
+identify which part of the previous 14.619 ms gap needs attention.
+
+The first v6 device report contains only the provisional checkpoint: 268 callbacks
+in 5.012 seconds. The saved file does not contain the final 30-second sample.
+
+| Device measurement | Memory build (v5, 30 s) | Rotation build (v6, 5 s) |
+| --- | ---: | ---: |
+| Reported average FPS | 48.9 | 53.4 |
+| Mean callback interval | 20.44 ms | 18.70 ms |
+| 95th-percentile interval | 34 ms | 32 ms |
+| Worst interval | 105.70 ms | 32.53 ms |
+| Frames exceeding 33.334 ms | 53/1,468 | 0/268 |
+| Intervals at or below 16.667 ms | 867/1,468 (59.1%) | 171/268 (63.8%) |
+| Mean app callback work | 5.81 ms | 4.62 ms |
+| Mean gap between platform callbacks | 14.62 ms | 14.07 ms |
+
+Entry setup averaged just 4 microseconds, already included in the gap. The gap's
+median was 9 ms and its 95th percentile was 27 ms (1 ms histogram bins); entry
+setup therefore does not explain most of the delay. The report cannot separate
+scheduling, presentation, and other work outside the app callback. Vertex-buffer
+upload averaged 0.101 ms. There were zero allocation failures, no mask rebuilds,
+and 1,818 KiB of texture data in the final frame.
+
+This is an encouraging short sample, not a measured sustained 60 FPS result or a
+controlled comparison. It contains less physics work (0.151 ms versus 0.535 ms)
+and fewer draw calls (14 versus 21 per frame), as well as a shorter observation
+window. A further playthrough of about 40 seconds in a level should allow the
+recorder to save its full 30 seconds after warmup.
