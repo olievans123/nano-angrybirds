@@ -1,14 +1,13 @@
 /* Device frame-cadence measurement and frame pacing, without an on-screen overlay.
  *
- * What the first reports showed: the platform calls back about 8 ms after the game's
- * frame work ends, or about 25 ms after it (one display refresh later), and the long
- * case happened on a third of the frames whatever the game's own cost. So this build
- * tries holding each frame back to a fixed spacing instead of finishing as early as
- * possible: after 5 s of free running in a level it tries a list of spacings for 3 s
- * each, reports them all, and keeps the best for the rest of the session.
+ * What the device reports showed: with the resident's default 16 ms redraw heartbeat the
+ * platform delivered frames in pairs (~10 ms apart, then a wait of ~28 ms), whatever the
+ * game cost, and holding frames to a fixed spacing did not help (PACE_SWEEP, now off).
+ * With the 2 ms heartbeat a newer resident offers, the callback comes back ~5 ms after
+ * our work and then ~8.5 ms after it, in strict alternation, so the game holds each frame
+ * to 16.667 ms using a prediction of the next gap (port_perf_gap_estimate).
  *
- * Sampling starts 2 s after a level loads and survives level changes. The report is saved
- * after the free-running part and once more after the sweep (two writes per launch). */
+ * Sampling starts 2 s after a level loads and covers 10 s; the report is saved once. */
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -55,7 +54,12 @@ static char sReport[4096];
 
 uint32_t port_perf_pace_us(void) { return sPaceUs; }
 void port_perf_set_pace(uint32_t us) { sPaceUs = us; }
-uint32_t port_perf_gap_estimate(void) { return sGapEstimate; }
+/* The platform redraws in pairs: the gap after our work is short (~5 ms) and then long
+ * (~8.5 ms) in strict alternation. Predict the next one from the last, so paced frames
+ * land 16.7 ms apart instead of alternating 14.8 / 18.4. */
+static uint32_t sGapShort = 5200, sGapLong = 8600;
+static int sLastShort;
+uint32_t port_perf_gap_estimate(void) { return sLastShort ? sGapLong : sGapShort; }
 
 void port_perf_level_loaded(void)
 {
@@ -101,8 +105,9 @@ static void prepare_report(void)
 {
     int n = 0, b, i;
     const Phase *f = &sTotal.phase[0];
-    n = put(n, "AB profile v10; us unless noted; warmup=2s/level\n");
-    n = put(n, "fast_redraw=%u pace=%u\n", (unsigned)port_fast_redraw, (unsigned)sPaceUs);
+    n = put(n, "AB profile v11; us unless noted; warmup=2s/level\n");
+    n = put(n, "fast_redraw=%u pace=%u gap_short=%u gap_long=%u\n", (unsigned)port_fast_redraw, (unsigned)sPaceUs,
+            (unsigned)sGapShort, (unsigned)sGapLong);
     n = put(n, "frames=%u elapsed=%u fps10=%u worst=%u gap_estimate=%u\n", (unsigned)sTotal.frames,
             (unsigned)sTotal.elapsed, (unsigned)(10000000ull * sTotal.frames / (sTotal.elapsed ? sTotal.elapsed : 1)),
             (unsigned)sTotal.worst, (unsigned)sGapEstimate);
@@ -158,7 +163,12 @@ void port_perf_frame(uint32_t interval, uint32_t cpu, uint32_t game,
     (void)physics; (void)io; (void)upload;
     if (!interval) return;  /* first callback has no previous timestamp */
     /* the platform's own time between our frames, when it does not skip a refresh */
-    if (gap > 2000u && gap < 16000u) sGapEstimate = (sGapEstimate * 7u + gap) / 8u;
+    if (gap > 2000u && gap < 16000u) {
+        sGapEstimate = (sGapEstimate * 7u + gap) / 8u;
+        sLastShort = gap < (sGapShort + sGapLong) / 2u;
+        if (sLastShort) sGapShort = (sGapShort * 7u + gap) / 8u;
+        else sGapLong = (sGapLong * 7u + gap) / 8u;
+    }
     if (sSkipSample) { sSkipSample = 0; return; }
     if (!sActive || sSaved) return;
     if (sWarmupUs) {
